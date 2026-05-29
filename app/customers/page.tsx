@@ -54,6 +54,11 @@ export default function CustomersPage() {
     return () => window.removeEventListener("focus", onFocus);
   }, [loadCustomers]);
 
+  const totalCount = useMemo(
+    () => new Set(customers.map((c) => c.wechat_id)).size,
+    [customers]
+  );
+
   const filtered = useMemo(
     () =>
       customers
@@ -80,6 +85,13 @@ export default function CustomersPage() {
             placeholder="搜索微信号"
           />
         </div>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="rounded bg-white p-3 text-sm shadow-sm">客户总数：{totalCount}</div>
+        {query ? (
+          <div className="rounded bg-white p-3 text-sm shadow-sm">匹配结果：{filtered.length}</div>
+        ) : null}
       </div>
 
       {filtered.map((c) => (
