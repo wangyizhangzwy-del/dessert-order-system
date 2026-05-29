@@ -13,7 +13,9 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
+  assertBatchHasItemLevelDetail,
   buildFebruaryBatches,
+  getCustomerOrderFromBatch,
   isImportableDefaultAddress,
   parseFebruaryCsv,
 } from "../lib/februaryImport";
@@ -92,6 +94,33 @@ async function main(): Promise<void> {
       console.log(`  - ${a}`);
     }
     if (uniqueAddresses.length > 15) console.log(`  ... and ${uniqueAddresses.length - 15} more`);
+  }
+
+  console.log("\n=== Detail structure check (NOT summary-only) ===");
+  let detailErrors = 0;
+  for (const batch of batches) {
+    for (const err of assertBatchHasItemLevelDetail(batch)) {
+      console.log(`  ⚠ ${err}`);
+      detailErrors += 1;
+    }
+  }
+  if (detailErrors === 0) {
+    console.log(`  ✓ All ${batches.length} batches have full item-level editable_rows / parsed_orders / grouped_excel_rows`);
+  }
+
+  const feb01 = batches.find((b) => b.batch_id === "import_february_2026-02-01");
+  if (feb01) {
+    console.log("\n=== Sample: 2026-02-01 customer orders (full item lists) ===");
+    for (const wechatId of ["怡", "pzzzy", "凯西余"]) {
+      const detail = getCustomerOrderFromBatch(feb01, wechatId);
+      if (!detail) continue;
+      console.log(`\n  客户 ${detail.wechat_id} · 备注/派送: ${detail.notes || "(空)"} · 合计 ${detail.customer_total}`);
+      for (const it of detail.items) {
+        console.log(
+          `    - ${it.product_name} ×${it.quantity} @ ${it.unit_price} = ${it.line_total} [${it.production_status}]`
+        );
+      }
+    }
   }
 
   if (dryRun) {

@@ -163,6 +163,23 @@ function groupByCustomer(rows: FebruaryCsvRow[]): CustomerGroup[] {
   return [...map.entries()].map(([wechat_id, lines]) => ({ wechat_id, lines }));
 }
 
+/** First non-empty delivery/address in a customer's lines (legacy Excel often repeats on row 1 only). */
+function customerDeliveryNotes(lines: FebruaryCsvRow[]): string {
+  for (const line of lines) {
+    const n = normalizeDeliveryOrAddress(line.delivery_or_address);
+    if (n) return n;
+  }
+  return "";
+}
+
+function customerStatusField(
+  lines: FebruaryCsvRow[],
+  field: "payment_status" | "delivery_status"
+): string {
+  const val = lines.find((l) => l[field]?.trim())?.[field];
+  return val?.trim() || (field === "payment_status" ? "未付款" : "未送达");
+}
+
 function buildBatchForDate(orderDate: string, dateRows: FebruaryCsvRow[]): SavedJielong {
   const customerGroups = groupByCustomer(dateRows);
   const parsed_orders: ParsedOrder[] = [];
@@ -176,9 +193,9 @@ function buildBatchForDate(orderDate: string, dateRows: FebruaryCsvRow[]): Saved
   let sequence = 0;
 
   for (const group of customerGroups) {
-    const notes = normalizeDeliveryOrAddress(group.lines[0]?.delivery_or_address);
-    const paymentStatus = group.lines[0]?.payment_status || "未付款";
-    const deliveryStatus = group.lines[0]?.delivery_status || "未送达";
+    const notes = customerDeliveryNotes(group.lines);
+    const paymentStatus = customerStatusField(group.lines, "payment_status");
+    const deliveryStatus = customerStatusField(group.lines, "delivery_status");
     const items: OrderItem[] = [];
     let customerTotal = 0;
     let customerHasMissingPrice = false;
@@ -286,7 +303,7 @@ function buildBatchForDate(orderDate: string, dateRows: FebruaryCsvRow[]): Saved
     batch_id: batchIdForDate(orderDate),
     batch_name: batchNameForDate(orderDate),
     order_date: orderDate,
-    raw_text: `[历史导入] February CSV · ${dateRows.length} product lines · ${customerGroups.length} customers`,
+    raw_text: `[历史导入] February detailed CSV · ${dateRows.length} product lines · ${customerGroups.length} customers · ${parsed_orders.length} customer orders`,
     menu_items: [],
     parsed_orders,
     editable_rows,
@@ -345,4 +362,65 @@ export function isImportableDefaultAddress(raw: string | undefined | null): bool
   if (!notes) return false;
   if (isPickupNote(notes)) return false;
   return extractAddress(notes) != null;
+}
+
+export interface CustomerOrderDetail {
+  wechat_id: string;
+  notes: string;
+  customer_total: number;
+  payment_status: string;
+  delivery_status: string;
+  items: { product_name: string; quantity: number; unit_price: number; line_total: number; production_status: string }[];
+}
+
+export function getCustomerOrderFromBatch(
+  batch: SavedJielong,
+  wechatId: string
+): CustomerOrderDetail | null {
+  const order = batch.parsed_orders.find((o) => o.wechat_id === wechatId && !o.is_example);
+  if (!order) return null;
+  const rows = batch.editable_rows.filter((r) => r.wechat_id === wechatId && !r.is_example);
+  const grouped = batch.grouped_excel_rows.filter((r) => r.customer === wechatId || rows.some((er) => er.display_name === r.product));
+  const payment_status = grouped.find((g) => g.payment_status)?.payment_status || "未付款";
+  const delivery_status = grouped.find((g) => g.delivery_status)?.delivery_status || "未送达";
+  return {
+    wechat_id: wechatId,
+    notes: order.notes,
+    customer_total: order.customer_total,
+    payment_status,
+    delivery_status,
+    items: order.items.map((it, idx) => ({
+      product_name: it.display_name || it.cake_name,
+      quantity: it.quantity,
+      unit_price: it.unit_price,
+      line_total: it.line_total,
+      production_status: rows[idx]?.production_status || "未制作",
+    })),
+  };
+}
+
+export function assertBatchHasItemLevelDetail(batch: SavedJielong): string[] {
+  const errors: string[] = [];
+  const productLinesInEditable = batch.editable_rows.filter((r) => !r.is_example).length;
+  const productLinesInParsed = batch.parsed_orders
+    .filter((o) => !o.is_example)
+    .reduce((n, o) => n + o.items.length, 0);
+  if (productLinesInEditable === 0) errors.push(`${batch.batch_id}: editable_rows is empty`);
+  if (productLinesInParsed === 0) errors.push(`${batch.batch_id}: parsed_orders has no items`);
+  if (productLinesInEditable !== productLinesInParsed) {
+    errors.push(
+      `${batch.batch_id}: editable_rows (${productLinesInEditable}) != parsed item count (${productLinesInParsed})`
+    );
+  }
+  if (batch.grouped_excel_rows.length !== productLinesInEditable) {
+    errors.push(
+      `${batch.batch_id}: grouped_excel_rows (${batch.grouped_excel_rows.length}) != editable_rows (${productLinesInEditable})`
+    );
+  }
+  for (const order of batch.parsed_orders.filter((o) => !o.is_example)) {
+    if (order.items.length === 0) {
+      errors.push(`${batch.batch_id}: customer ${order.wechat_id} has zero items`);
+    }
+  }
+  return errors;
 }
