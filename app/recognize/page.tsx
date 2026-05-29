@@ -27,6 +27,7 @@ import {
 } from "@/lib/dateFormat";
 import { TEST_RELAY_TEXT } from "@/lib/testRelay";
 import { MenuItem, ParsedOrder } from "@/lib/types";
+import { formatMoney, formatPrice, roundMoney } from "@/lib/moneyFormat";
 import { useRouter, useSearchParams } from "next/navigation";
 
 type RowStatus = "success" | "warning" | "failed";
@@ -84,19 +85,6 @@ interface GroupedExcelRow {
 interface CustomerFlags {
   delivered: boolean;
   paid: boolean;
-}
-
-function roundMoney(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
-}
-
-function formatMoney(n: number): string {
-  return roundMoney(n).toFixed(1);
-}
-
-function formatPrice(n: number): string {
-  const v = roundMoney(n);
-  return Number.isInteger(v) ? String(v) : v.toFixed(1);
 }
 
 function compactNotes(input: string): string {
@@ -638,7 +626,7 @@ function RecognizePageInner() {
 
   const toGroupedExcelTSV = (): string => {
     const table = [
-      ["日期", "客户", "商品", "数量", "单价", "总金额", "备注", "制作状态", "配送状态", "付款状态"],
+      ["日期", "客户", "商品", "数量", "单价(美金)", "总金额(美金)", "备注", "制作状态", "配送状态", "付款状态"],
       ...buildGroupedExcelRows().map((r) => [
         r.date,
         r.customer,
@@ -657,7 +645,7 @@ function RecognizePageInner() {
 
   const copyCustomerSummary = async () => {
     const table = [
-      ["客户", "商品汇总", "客户总金额", "派送方式"],
+      ["客户", "商品汇总", "客户总金额(美金)", "派送方式"],
       ...customerSummaryByNotes.map((c) => [
         c.wechat_id,
         c.items_summary,
@@ -678,7 +666,7 @@ function RecognizePageInner() {
 
   const copyProduction = async () => {
     const table = [
-      ["SKU", "口味", "商品名称", "显示名称", "总数量", "本次接龙总金额"],
+      ["SKU", "口味", "商品名称", "显示名称", "总数量", "本次接龙总金额(美金)"],
       ...productionSummary.map((r, idx) => [
         r.sku_code,
         r.variant,
@@ -830,9 +818,20 @@ function RecognizePageInner() {
 
   const updateDeliveryMode = (wechatId: string, mode: DeliveryMode) => {
     setDeliveryModeManual((prev) => ({ ...prev, [wechatId]: true }));
+    const notes = getCustomerNotes(
+      wechatId,
+      customerSummary.find((c) => c.wechat_id === wechatId)?.notes ?? ""
+    );
+    const resolved = resolveDeliveryMode(notes, customerAddresses[wechatId]);
     setDeliveryModes((prev) => ({
       ...prev,
-      [wechatId]: { mode, customText: prev[wechatId]?.customText ?? "" },
+      [wechatId]:
+        mode === "custom"
+          ? {
+              mode: "custom",
+              customText: prev[wechatId]?.customText || resolved.customText || notes.trim(),
+            }
+          : { mode, customText: "" },
     }));
   };
 
@@ -1008,7 +1007,7 @@ function RecognizePageInner() {
           <table className="w-full table-fixed border-collapse text-xs">
             <thead>
               <tr className="bg-zinc-100">
-                {["日期", "客户", "商品", "数量", "单价", "总金额", "备注", "制作状态", "配送状态", "付款状态"].map((h) => (
+                {["日期", "客户", "商品", "数量", "单价(美金)", "总金额(美金)", "备注", "制作状态", "配送状态", "付款状态"].map((h) => (
                   <th key={h} className="sticky top-0 z-10 border bg-zinc-100 px-1 py-2 text-left font-medium">
                     {h}
                   </th>
@@ -1109,7 +1108,7 @@ function RecognizePageInner() {
           <table className="min-w-[760px] border-collapse text-sm">
             <thead>
               <tr className="bg-zinc-100">
-                {["客户", "商品汇总", "客户总金额", "派送方式"].map((h) => (
+                {["客户", "商品汇总", "客户总金额(美金)", "派送方式"].map((h) => (
                   <th key={h} className="border px-2 py-2 text-left">{h}</th>
                 ))}
               </tr>
@@ -1145,9 +1144,6 @@ function RecognizePageInner() {
                           value={dm.customText}
                           onChange={(e) => updateDeliveryCustom(row.wechat_id, e.target.value)}
                         />
-                      ) : null}
-                      {dm.mode === "default" && defaultAddr ? (
-                        <span className="text-xs text-zinc-500">{defaultAddr}</span>
                       ) : null}
                     </div>
                   </td>
@@ -1195,7 +1191,7 @@ function RecognizePageInner() {
             {isCloudBackend() ? "云端 Supabase（多设备共享）" : "本机 localStorage（仅本设备）"}
           </span>
         </p>
-        <p className="mt-2 text-sm">总销售额：<span className="font-semibold">{formatMoney(totalSales)}</span></p>
+        <p className="mt-2 text-sm">总销售额(美金)：<span className="font-semibold">{formatMoney(totalSales)}</span></p>
         <p className="text-sm">warning 数量：<span className="font-semibold text-amber-700">{warningCount}</span></p>
         <p className="text-sm">failed 数量：<span className="font-semibold text-red-700">{failedCount}</span></p>
         {isExistingBatch ? (
