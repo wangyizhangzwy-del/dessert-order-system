@@ -3,12 +3,13 @@ export function roundMoney(n: number): number {
 }
 
 /** 金额展示（美金，带 $ 前缀）。 */
-export function formatMoney(n: number): string {
-  return `$${roundMoney(n).toFixed(1)}`;
+export function formatMoney(n: number | null | undefined): string {
+  const v = roundMoney(Number(n) || 0);
+  return `$${v.toFixed(1)}`;
 }
 
 /** 单价展示（美金，带 $ 前缀）。 */
-export function formatPrice(n: number): string {
-  const v = roundMoney(n);
+export function formatPrice(n: number | null | undefined): string {
+  const v = roundMoney(Number(n) || 0);
   return Number.isInteger(v) ? `$${v}` : `$${v.toFixed(1)}`;
 }

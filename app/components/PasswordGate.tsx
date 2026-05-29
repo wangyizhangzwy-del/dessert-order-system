@@ -13,12 +13,21 @@ export function PasswordGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setMounted(true);
-    if (sessionStorage.getItem(SESSION_KEY) === "1") setOk(true);
+    try {
+      if (sessionStorage.getItem(SESSION_KEY) === "1") setOk(true);
+    } catch {
+      // 私密浏览 / 禁用 storage 时不阻塞页面
+    }
   }, []);
 
   if (!required) return <>{children}</>;
-  // Avoid hydration mismatch: don't decide gate state until client mount.
-  if (!mounted) return null;
+  if (!mounted) {
+    return (
+      <div className="mx-auto mt-12 max-w-md rounded-xl bg-white p-6 shadow">
+        <p className="text-sm text-zinc-500">正在加载...</p>
+      </div>
+    );
+  }
   if (ok) return <>{children}</>;
 
   return (
@@ -35,7 +44,11 @@ export function PasswordGate({ children }: { children: React.ReactNode }) {
         className="mt-3 w-full rounded bg-zinc-900 px-4 py-2 text-white"
         onClick={() => {
           if (input === required) {
-            sessionStorage.setItem(SESSION_KEY, "1");
+            try {
+              sessionStorage.setItem(SESSION_KEY, "1");
+            } catch {
+              // storage 不可用时仍允许进入
+            }
             setOk(true);
             setErr("");
           } else {

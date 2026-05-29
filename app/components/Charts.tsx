@@ -81,12 +81,17 @@ export function BarChart({
   formatValue?: (n: number) => string;
   yAxisLabel?: string;
 }) {
-  const width = chartWidth(labels.length);
+  const safeLabels = Array.isArray(labels) ? labels : [];
+  const safeSeries = Array.isArray(series) ? series : [];
+  if (safeLabels.length === 0) {
+    return <div className="py-8 text-center text-sm text-zinc-500">暂无图表数据</div>;
+  }
+  const width = chartWidth(safeLabels.length);
   const leftPad = 36;
-  const max = axisMax(series.flatMap((s) => s.values));
+  const max = axisMax(safeSeries.flatMap((s) => s.values ?? []));
   const groupW = SLOT_W * 0.6;
-  const barW = groupW / Math.max(series.length, 1);
-  const { rotate, height, plotH } = xAxisLayout(labels);
+  const barW = groupW / Math.max(safeSeries.length, 1);
+  const { rotate, height, plotH } = xAxisLayout(safeLabels);
   const baseline = PAD_TOP + plotH;
   const labelY = height - (rotate ? 6 : 11);
 
@@ -98,11 +103,11 @@ export function BarChart({
         <text x={8} y={PAD_TOP + 8} fontSize="10" fill="#71717a" transform={`rotate(-90 8 ${PAD_TOP + 8})`}>
           {yAxisLabel}
         </text>
-        {labels.map((label, i) => {
+        {safeLabels.map((label, i) => {
           const slotX = leftPad + i * SLOT_W;
           return (
             <Fragment key={`${label}-${i}`}>
-              {series.map((s, si) => {
+              {safeSeries.map((s, si) => {
                 const v = s.values[i] ?? 0;
                 const h = (v / max) * plotH;
                 const x = slotX + (SLOT_W - groupW) / 2 + si * barW;

@@ -27,29 +27,22 @@ import {
 } from "@/lib/dateFormat";
 import { MenuItem, ParsedOrder } from "@/lib/types";
 import { formatMoney, formatPrice, roundMoney } from "@/lib/moneyFormat";
+import {
+  customerKey,
+  emptyCustomerRow,
+  getOrderRecordProductName,
+  needsDeliveryFromMode,
+  safeRowSpan,
+  safeStr,
+  sanitizeEditableRow,
+  sanitizeEditableRows,
+  type SafeEditableRow,
+} from "@/lib/recognizeSafe";
+import { ErrorBoundary } from "@/app/components/ErrorBoundary";
 import { useRouter, useSearchParams } from "next/navigation";
 
 type RowStatus = "success" | "warning" | "failed";
-
-interface EditableRow {
-  row_id: string;
-  sequence: number;
-  raw_line: string;
-  wechat_id: string;
-  sku_code: string;
-  variant: string;
-  flavor_combo: string;
-  cake_name: string;
-  display_name: string;
-  quantity: number;
-  unit_price: number;
-  line_total: number;
-  notes: string;
-  status: RowStatus;
-  warning_reason: string;
-  is_example: boolean;
-  production_status: string;
-}
+type EditableRow = SafeEditableRow;
 
 interface CustomerSummaryRow {
   wechat_id: string;
@@ -105,31 +98,13 @@ function deliveryNoteKey(rawNotes: string): { category: number; group: string } 
   return { category: 0, group: core };
 }
 
-/** 订单记录表显示完整原始商品名（非 normalized、非仅 SKU）。 */
-function getOrderRecordProductName(row: EditableRow): string {
-  if (row.sku_code.trim() === "1" && row.variant.trim()) {
-    return row.display_name.trim() || `${row.variant.trim()}小贝`;
-  }
-  if (row.sku_code.trim() === "8" && row.flavor_combo?.trim()) {
-    const base = row.cake_name.trim() || row.display_name.trim();
-    return base.includes(row.flavor_combo.trim())
-      ? base
-      : `${base}（${row.flavor_combo.trim()}）`;
-  }
-  return row.cake_name.trim() || row.display_name.trim();
-}
-
-function customerKey(wechatId: string): string {
-  return wechatId.trim() || "未填写微信号";
-}
-
 /** 同一客户订单的制作状态保持一致（加载历史接龙时归一化）。 */
 function normalizeProductionStatusByCustomer(rows: EditableRow[]): EditableRow[] {
   const statusByCustomer = new Map<string, string>();
   for (const row of rows) {
     const key = customerKey(row.wechat_id);
     if (!statusByCustomer.has(key)) {
-      statusByCustomer.set(key, row.production_status ?? "未制作");
+      statusByCustomer.set(key, row.production_status || "未制作");
     }
   }
   return rows.map((row) => ({
@@ -152,10 +127,6 @@ function statusSelectClass(
   return `${base} border-zinc-200 bg-white text-zinc-700`;
 }
 
-function needsDeliveryFromMode(mode: DeliveryMode): boolean {
-  return mode !== "pickup";
-}
-
 function needsDeliverySelectClass(needs: boolean): string {
   const base = "h-6 w-full rounded border px-0.5 text-xs text-center leading-none";
   if (needs) return `${base} border-red-300 bg-red-100 font-medium text-red-800`;
@@ -165,56 +136,68 @@ function needsDeliverySelectClass(needs: boolean): string {
 function toRows(orders: ParsedOrder[]): EditableRow[] {
   const rows: EditableRow[] = [];
   let sequence = 1;
-  for (let oi = 0; oi < orders.length; oi += 1) {
-    const order = orders[oi];
+  const safeOrders = Array.isArray(orders) ? orders : [];
+  for (let oi = 0; oi < safeOrders.length; oi += 1) {
+    const order = safeOrders[oi];
     const isExample = order.is_example ?? oi === 0;
-    if (order.items.length === 0) {
-      rows.push({
-        row_id: `${order.id}_empty`,
-        sequence,
-        raw_line: order.raw_line,
-        wechat_id: order.wechat_id,
-        sku_code: "",
-        variant: "",
-        flavor_combo: "",
-        cake_name: "",
-        display_name: "",
-        quantity: 1,
-        unit_price: 0,
-        line_total: 0,
-        notes: order.notes,
-        status: order.status,
-        warning_reason: order.warning_reason ?? "",
-        is_example: isExample,
-        production_status: "未制作",
-      });
+    const items = Array.isArray(order.items) ? order.items : [];
+    if (items.length === 0) {
+      rows.push(
+        sanitizeEditableRow(
+          {
+            row_id: `${order.id ?? oi}_empty`,
+            sequence,
+            raw_line: order.raw_line,
+            wechat_id: order.wechat_id,
+            notes: order.notes,
+            status: order.status,
+            warning_reason: order.warning_reason,
+            is_example: isExample,
+            production_status: "未制作",
+            quantity: 0,
+            unit_price: 0,
+            line_total: 0,
+          },
+          rows.length
+        )
+      );
       sequence += 1;
       continue;
     }
-    for (const item of order.items) {
-      rows.push({
-        row_id: `${order.id}_${sequence}`,
-        sequence,
-        raw_line: order.raw_line,
-        wechat_id: order.wechat_id,
-        sku_code: item.sku_code,
-        variant: item.variant ?? "",
-        flavor_combo: item.flavor_combo ?? "",
-        cake_name: item.cake_name,
-        display_name: item.display_name,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        line_total: roundMoney(item.quantity * item.unit_price),
-        notes: order.notes,
-        status: order.status,
-        warning_reason: order.warning_reason ?? "",
-        is_example: isExample,
-        production_status: "未制作",
-      });
+    for (const item of items) {
+      rows.push(
+        sanitizeEditableRow(
+          {
+            row_id: `${order.id ?? oi}_${sequence}`,
+            sequence,
+            raw_line: order.raw_line,
+            wechat_id: order.wechat_id,
+            sku_code: item.sku_code,
+            variant: item.variant,
+            flavor_combo: item.flavor_combo,
+            cake_name: item.cake_name,
+            display_name: item.display_name,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            line_total: roundMoney(safeNum(item.quantity) * safeNum(item.unit_price)),
+            notes: order.notes,
+            status: order.status,
+            warning_reason: order.warning_reason,
+            is_example: isExample,
+            production_status: "未制作",
+          },
+          rows.length
+        )
+      );
       sequence += 1;
     }
   }
   return rows;
+}
+
+function safeNum(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 }
 
 function copyText(text: string): Promise<void> {
@@ -244,9 +227,11 @@ function RecognizeLoading() {
 
 export default function RecognizePage() {
   return (
-    <Suspense fallback={<RecognizeLoading />}>
-      <RecognizePageInner />
-    </Suspense>
+    <ErrorBoundary>
+      <Suspense fallback={<RecognizeLoading />}>
+        <RecognizePageInner />
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 
@@ -282,12 +267,16 @@ function RecognizePageInner() {
   useEffect(() => {
     setMounted(true);
     (async () => {
-      const customers = await getCustomers();
-      const addrMap: Record<string, string> = {};
-      for (const c of customers) {
-        if (c.default_address) addrMap[c.wechat_id] = c.default_address;
+      try {
+        const customers = await getCustomers();
+        const addrMap: Record<string, string> = {};
+        for (const c of customers ?? []) {
+          if (c?.default_address) addrMap[c.wechat_id] = c.default_address;
+        }
+        setCustomerAddresses(addrMap);
+      } catch (e) {
+        console.error("[recognize] load customers failed", e);
       }
-      setCustomerAddresses(addrMap);
     })();
   }, []);
 
@@ -295,55 +284,66 @@ function RecognizePageInner() {
     if (!editingBatchId) return;
     let active = true;
     (async () => {
-      const saved = await getSavedJielongById(editingBatchId);
-      if (!active || !saved) return;
-      setRawText(saved.raw_text ?? "");
-      setOrderDate(saved.order_date ?? defaultOrderDateString());
-      const loadedRows = normalizeProductionStatusByCustomer(
-        ((saved.editable_rows as EditableRow[]) ?? []).map((r) => ({
-          ...r,
-          production_status: r.production_status ?? "未制作",
-        }))
-      );
-      setRows(loadedRows);
-      setMenuItems(saved.menu_items ?? []);
-      setBatchName(saved.batch_name ?? generateBatchName(saved.order_date ?? defaultOrderDateString()));
-      setCurrentBatchId(saved.batch_id);
-      const flags: Record<string, CustomerFlags> = {};
-      saved.grouped_excel_rows?.forEach((r) => {
-        if (!r.customer) return;
-        flags[r.customer] = {
-          delivered: r.delivery_status === "已送达",
-          paid: r.payment_status === "已付款",
-        };
-      });
-      setCustomerFlags(flags);
-      const notesEdits: Record<string, string> = {};
-      const modes: Record<string, DeliveryModeState> = {};
-      const manual: Record<string, boolean> = {};
-      const needsDelivery: Record<string, boolean> = {};
-      const needsDeliveryManual: Record<string, boolean> = {};
-      saved.customer_summary_rows?.forEach((c) => {
-        if (c.notes) notesEdits[c.wechat_id] = c.notes;
-        if (c.delivery_mode) {
-          modes[c.wechat_id] = {
-            mode: c.delivery_mode,
-            customText: c.delivery_custom ?? "",
+      try {
+        const saved = await getSavedJielongById(editingBatchId);
+        if (!active) return;
+        if (!saved) {
+          setMessage("历史接龙不存在或加载失败");
+          return;
+        }
+        setRawText(saved.raw_text ?? "");
+        setOrderDate(saved.order_date ?? defaultOrderDateString());
+        const loadedRows = normalizeProductionStatusByCustomer(
+          sanitizeEditableRows(saved.editable_rows)
+        );
+        setRows(loadedRows);
+        setMenuItems(Array.isArray(saved.menu_items) ? saved.menu_items : []);
+        setBatchName(saved.batch_name ?? generateBatchName(saved.order_date ?? defaultOrderDateString()));
+        setCurrentBatchId(saved.batch_id);
+        const flags: Record<string, CustomerFlags> = {};
+        const groupedRows = Array.isArray(saved.grouped_excel_rows) ? saved.grouped_excel_rows : [];
+        groupedRows.forEach((r) => {
+          if (!r?.customer) return;
+          flags[r.customer] = {
+            delivered: r.delivery_status === "已送达",
+            paid: r.payment_status === "已付款",
           };
-          manual[c.wechat_id] = true;
-        }
-        if (typeof c.needs_delivery === "boolean") {
-          needsDelivery[c.wechat_id] = c.needs_delivery;
-          needsDeliveryManual[c.wechat_id] = true;
-        }
-      });
-      setCustomerNotesEdits(notesEdits);
-      setDeliveryModes(modes);
-      setDeliveryModeManual(manual);
-      setCustomerNeedsDelivery(needsDelivery);
-      setCustomerNeedsDeliveryManual(needsDeliveryManual);
-      skipAutosaveRef.current = true;
-      setMessage("已加载历史接龙，可继续编辑");
+        });
+        setCustomerFlags(flags);
+        const notesEdits: Record<string, string> = {};
+        const modes: Record<string, DeliveryModeState> = {};
+        const manual: Record<string, boolean> = {};
+        const needsDelivery: Record<string, boolean> = {};
+        const needsDeliveryManual: Record<string, boolean> = {};
+        const summaryRows = Array.isArray(saved.customer_summary_rows) ? saved.customer_summary_rows : [];
+        summaryRows.forEach((c) => {
+          if (!c?.wechat_id) return;
+          if (c.notes) notesEdits[c.wechat_id] = c.notes;
+          if (c.delivery_mode) {
+            modes[c.wechat_id] = {
+              mode: c.delivery_mode,
+              customText: safeStr(c.delivery_custom),
+            };
+            manual[c.wechat_id] = true;
+          }
+          if (typeof c.needs_delivery === "boolean") {
+            needsDelivery[c.wechat_id] = c.needs_delivery;
+            needsDeliveryManual[c.wechat_id] = true;
+          }
+        });
+        setCustomerNotesEdits(notesEdits);
+        setDeliveryModes(modes);
+        setDeliveryModeManual(manual);
+        setCustomerNeedsDelivery(needsDelivery);
+        setCustomerNeedsDeliveryManual(needsDeliveryManual);
+        skipAutosaveRef.current = true;
+        setMessage("已加载历史接龙，可继续编辑");
+      } catch (e) {
+        if (!active) return;
+        const detail = e instanceof Error ? e.message : String(e);
+        console.error("[recognize] load batch failed", e);
+        setMessage(`加载历史接龙失败：${detail}`);
+      }
     })();
     return () => {
       active = false;
@@ -451,9 +451,20 @@ function RecognizePageInner() {
   const getCustomerNotes = (wechatId: string, fallback: string) =>
     customerNotesEdits[wechatId] ?? fallback;
 
-  const getDeliveryModeForCustomer = (wechatId: string, notes: string): DeliveryModeState =>
-    deliveryModes[wechatId] ??
-    resolveDeliveryMode(notes, customerAddresses[wechatId]);
+  const getDeliveryModeForCustomer = (wechatId: string, notes: string): DeliveryModeState => {
+    const stored = deliveryModes[wechatId];
+    if (stored) {
+      return {
+        mode: stored.mode ?? "default",
+        customText: safeStr(stored.customText),
+      };
+    }
+    const resolved = resolveDeliveryMode(notes, customerAddresses[wechatId]);
+    return {
+      mode: resolved.mode ?? "default",
+      customText: safeStr(resolved.customText),
+    };
+  };
 
   const getNeedsDeliveryForCustomer = (wechatId: string, notes: string): boolean => {
     if (customerNeedsDeliveryManual[wechatId]) {
@@ -489,8 +500,19 @@ function RecognizePageInner() {
       const customerRows = effectiveRows.filter(
         (r) => customerKey(r.wechat_id) === wechatId
       );
-      const rowSpan = Math.max(customerRows.length, 1);
+      const rowSpan = safeRowSpan(customerRows.length);
       const productionStatus = customerRows[0]?.production_status || "未制作";
+      if (customerRows.length === 0) {
+        entries.push({
+          row: emptyCustomerRow(wechatId, customer.notes),
+          isFirst: true,
+          rowSpan: 1,
+          customerTotal: customer.customer_total ?? 0,
+          wechatId,
+          productionStatus: "未制作",
+        });
+        continue;
+      }
       customerRows.forEach((row, idx) => {
         entries.push({
           row,
@@ -587,7 +609,7 @@ function RecognizePageInner() {
   const buildCurrentOrders = (): ParsedOrder[] => {
     const map = new Map<string, EditableRow[]>();
     for (const row of effectiveRows) {
-      const key = row.wechat_id.trim() || `unknown_${row.row_id}`;
+      const key = safeStr(row.wechat_id).trim() || `unknown_${row.row_id}`;
       if (!map.has(key)) map.set(key, []);
       map.get(key)?.push(row);
     }
@@ -596,14 +618,14 @@ function RecognizePageInner() {
       const items = group
         .filter((g) => g.sku_code || g.cake_name || g.display_name)
         .map((g) => ({
-          sku_code: g.sku_code,
-          variant: g.variant || undefined,
-          flavor_combo: g.flavor_combo || undefined,
-          cake_name: g.cake_name,
-          display_name: g.display_name || `${g.cake_name}${g.variant ? `-${g.variant}` : ""}`,
-          quantity: Number(g.quantity),
-          unit_price: Number(g.unit_price),
-          line_total: roundMoney(Number(g.quantity) * Number(g.unit_price)),
+          sku_code: safeStr(g.sku_code),
+          variant: safeStr(g.variant) || undefined,
+          flavor_combo: safeStr(g.flavor_combo) || undefined,
+          cake_name: safeStr(g.cake_name),
+          display_name: safeStr(g.display_name) || `${safeStr(g.cake_name)}${safeStr(g.variant) ? `-${safeStr(g.variant)}` : ""}`,
+          quantity: safeNum(g.quantity),
+          unit_price: safeNum(g.unit_price),
+          line_total: roundMoney(safeNum(g.quantity) * safeNum(g.unit_price)),
         }));
       const status =
         group.some((g) => g.status === "failed")
@@ -1059,8 +1081,8 @@ function RecognizePageInner() {
             复制订单记录
           </button>
         </div>
-        <div className="mt-3 overflow-x-auto rounded border lg:overflow-x-visible">
-          <table className="w-full min-w-[640px] table-fixed border-collapse text-sm lg:min-w-0">
+        <div className="mt-3 overflow-x-auto rounded border">
+          <table className="w-full min-w-[640px] table-fixed border-collapse text-sm">
             <colgroup>
               <col className="w-[12%]" />
               <col className="w-[34%]" />
@@ -1081,7 +1103,14 @@ function RecognizePageInner() {
               </tr>
             </thead>
             <tbody>
-              {orderRecordEntries.map(({ row, isFirst, rowSpan, customerTotal, wechatId, productionStatus }) => (
+              {orderRecordEntries.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="border px-2 py-3 text-center text-sm text-zinc-500">
+                    暂无订单记录，请先识别接龙
+                  </td>
+                </tr>
+              ) : (
+              orderRecordEntries.map(({ row, isFirst, rowSpan, customerTotal, wechatId, productionStatus }) => (
                 <tr
                   key={row.row_id}
                   ref={(el) => {
@@ -1153,7 +1182,8 @@ function RecognizePageInner() {
                     </td>
                   ) : null}
                 </tr>
-              ))}
+              ))
+              )}
             </tbody>
           </table>
         </div>
@@ -1164,14 +1194,14 @@ function RecognizePageInner() {
           <h2 className="text-lg font-semibold">客户汇总预览</h2>
           <button onClick={copyCustomerSummary} className="rounded bg-zinc-900 px-3 py-2 text-sm text-white">复制客户汇总到 Excel</button>
         </div>
-        <div className="mt-3 overflow-x-auto lg:overflow-x-visible">
-          <table className="w-full table-fixed border-collapse text-xs lg:min-w-0 lg:text-sm">
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[520px] table-fixed border-collapse text-xs lg:text-sm">
             <colgroup>
-              <col className="w-[13%]" />
-              <col className="w-[36%]" />
-              <col className="w-[10%]" />
-              <col className="w-[7%]" />
-              <col className="w-[34%]" />
+              <col className="w-[11%]" />
+              <col className="w-[54%]" />
+              <col className="w-[9%]" />
+              <col className="w-[6%]" />
+              <col className="w-[20%]" />
             </colgroup>
             <thead>
               <tr className="bg-zinc-100">
@@ -1183,15 +1213,25 @@ function RecognizePageInner() {
               </tr>
             </thead>
             <tbody>
-              {customerSummaryByNotes.map((row) => {
-                const dm = getDeliveryModeForCustomer(row.wechat_id, row.notes);
-                const defaultAddr = customerAddresses[row.wechat_id];
-                const needsDelivery = getNeedsDeliveryForCustomer(row.wechat_id, row.notes);
+              {customerSummaryByNotes.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="border px-2 py-3 text-center text-sm text-zinc-500">
+                    暂无客户汇总
+                  </td>
+                </tr>
+              ) : (
+              customerSummaryByNotes.map((row) => {
+                const notes = row.notes ?? "";
+                const wechatId = row.wechat_id ?? "";
+                const dm = getDeliveryModeForCustomer(wechatId, notes);
+                const defaultAddr = customerAddresses[wechatId] ?? "";
+                const needsDelivery = getNeedsDeliveryForCustomer(wechatId, notes);
+                const customText = dm.customText ?? "";
                 return (
-                <tr key={`cs_${row.wechat_id}`} className="align-middle">
-                  <td className="border px-1 py-1 truncate lg:px-1.5">{row.wechat_id}</td>
+                <tr key={`cs_${wechatId}`} className="align-middle">
+                  <td className="border px-1 py-1 truncate lg:px-1.5">{wechatId}</td>
                   <td className="border px-1 py-1 leading-snug lg:px-1.5">
-                    <span className="line-clamp-2 break-words">{row.items_summary}</span>
+                    <span className="block break-words">{row.items_summary ?? ""}</span>
                   </td>
                   <td className="border px-1 py-1 whitespace-nowrap lg:px-1.5">
                     {formatMoney(row.customer_total)}
@@ -1201,54 +1241,54 @@ function RecognizePageInner() {
                       className={needsDeliverySelectClass(needsDelivery)}
                       value={needsDelivery ? "是" : "否"}
                       onChange={(e) =>
-                        updateNeedsDelivery(row.wechat_id, e.target.value === "是")
+                        updateNeedsDelivery(wechatId, e.target.value === "是")
                       }
                     >
                       <option value="是">是</option>
                       <option value="否">否</option>
                     </select>
                   </td>
-                  <td className="border px-1 py-1 lg:px-1.5">
+                  <td className="border px-0.5 py-1 lg:px-1">
                     {dm.mode === "custom" ? (
-                      <div className="flex min-w-0 items-center gap-0.5">
+                      <div className="flex min-w-0 items-center gap-px">
                         <input
-                          className="h-6 min-w-0 flex-1 truncate rounded border px-1 text-xs leading-tight"
+                          className="h-6 min-w-0 w-0 flex-1 truncate rounded border px-0.5 text-xs leading-tight"
                           placeholder="地址"
-                          title={dm.customText}
-                          value={dm.customText}
-                          onChange={(e) => updateDeliveryCustom(row.wechat_id, e.target.value)}
+                          title={customText}
+                          value={customText}
+                          onChange={(e) => updateDeliveryCustom(wechatId, e.target.value)}
                         />
                         <select
                           aria-label="切换派送"
-                          className="h-6 w-7 shrink-0 rounded border px-0 text-[10px] text-zinc-600"
+                          className="h-6 w-6 shrink-0 rounded border px-0 text-[10px] text-zinc-600"
                           defaultValue=""
                           onChange={(e) => {
                             const next = e.target.value as DeliveryMode;
                             if (next && next !== "custom") {
-                              updateDeliveryMode(row.wechat_id, next);
+                              updateDeliveryMode(wechatId, next);
                               e.target.value = "";
                             }
                           }}
                         >
                           <option value="">⇄</option>
-                          <option value="default">{defaultAddr?.trim() || "默认"}</option>
+                          <option value="default">{defaultAddr.trim() || "默认"}</option>
                           <option value="pickup">自取</option>
                         </select>
                       </div>
                     ) : (
                       <select
-                        className="h-6 w-full truncate rounded border px-1 text-xs"
-                        value={dm.mode}
+                        className="h-6 w-full max-w-full truncate rounded border px-0.5 text-xs"
+                        value={dm.mode ?? "default"}
                         title={
                           dm.mode === "default"
-                            ? defaultAddr?.trim() || "默认地址"
+                            ? defaultAddr.trim() || "默认地址"
                             : "自取"
                         }
                         onChange={(e) =>
-                          updateDeliveryMode(row.wechat_id, e.target.value as DeliveryMode)
+                          updateDeliveryMode(wechatId, e.target.value as DeliveryMode)
                         }
                       >
-                        <option value="default">{defaultAddr?.trim() || "默认地址"}</option>
+                        <option value="default">{defaultAddr.trim() || "默认地址"}</option>
                         <option value="pickup">自取</option>
                         <option value="custom">…</option>
                       </select>
@@ -1256,7 +1296,8 @@ function RecognizePageInner() {
                   </td>
                 </tr>
                 );
-              })}
+              })
+              )}
             </tbody>
           </table>
         </div>

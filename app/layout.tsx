@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { TopNav } from "@/app/components/TopNav";
 import { PasswordGate } from "@/app/components/PasswordGate";
+import { ErrorBoundary } from "@/app/components/ErrorBoundary";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,10 +31,12 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-zinc-50 text-zinc-900">
-        <PasswordGate>
-          <TopNav />
-          <main className="mx-auto w-full max-w-5xl px-4 py-4">{children}</main>
-        </PasswordGate>
+        <ErrorBoundary>
+          <PasswordGate>
+            <TopNav />
+            <main className="mx-auto w-full max-w-5xl px-4 py-4">{children}</main>
+          </PasswordGate>
+        </ErrorBoundary>
       </body>
     </html>
   );
