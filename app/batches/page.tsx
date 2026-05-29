@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { SavedJielong } from "@/lib/types";
 import { deleteJielong, getSavedJielongs } from "@/lib/storage";
@@ -19,7 +19,34 @@ function parseOrderDateForIndex(orderDate?: string): number {
 }
 
 export default function BatchesPage() {
-  const [batches, setBatches] = useState<SavedJielong[]>(() => getSavedJielongs().sort(sortByRecentDate));
+  const [batches, setBatches] = useState<SavedJielong[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const saved = await getSavedJielongs();
+        if (active) setBatches([...saved].sort(sortByRecentDate));
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleDelete = async (batchId: string) => {
+    try {
+      await deleteJielong(batchId);
+      const saved = await getSavedJielongs();
+      setBatches([...saved].sort(sortByRecentDate));
+    } catch (e) {
+      window.alert(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
   const nameMap = (() => {
     const asc = [...batches].sort((a, b) => {
       const ta = parseOrderDateForIndex(a.order_date) || Date.parse(a.created_at ?? "") || 0;
@@ -40,7 +67,9 @@ export default function BatchesPage() {
       <div className="rounded-xl bg-white p-4 shadow-sm">
         <h1 className="text-xl font-bold">历史接龙</h1>
       </div>
-      {batches.length === 0 ? (
+      {loading ? (
+        <div className="rounded-xl bg-white p-4 text-sm text-zinc-500 shadow-sm">正在加载...</div>
+      ) : batches.length === 0 ? (
         <div className="rounded-xl bg-white p-4 text-sm text-zinc-600 shadow-sm">暂无接龙</div>
       ) : (
         batches.map((batch) => (
@@ -54,10 +83,7 @@ export default function BatchesPage() {
             <div className="mt-2 flex gap-2">
               <Link href={`/recognize?batch_id=${batch.batch_id}`} className="rounded bg-zinc-900 px-3 py-1 text-xs text-white">打开</Link>
               <button
-                onClick={() => {
-                  deleteJielong(batch.batch_id);
-                  setBatches(getSavedJielongs().sort(sortByRecentDate));
-                }}
+                onClick={() => handleDelete(batch.batch_id)}
                 className="rounded bg-red-100 px-3 py-1 text-xs text-red-700"
               >
                 删除

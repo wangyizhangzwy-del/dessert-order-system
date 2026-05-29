@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Customer } from "@/lib/types";
 import { getCustomers } from "@/lib/storage";
@@ -18,8 +18,19 @@ function lastOrderTimestamp(c: Customer): number {
 }
 
 export default function CustomersPage() {
-  const [customers] = useState<Customer[]>(() => getCustomers());
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const data = await getCustomers();
+      if (active) setCustomers(data);
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const filtered = useMemo(
     () =>

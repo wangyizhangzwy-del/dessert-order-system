@@ -1,21 +1,40 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import { Customer } from "@/lib/types";
 import { getCustomers } from "@/lib/storage";
 import { sortByRecentDate } from "@/lib/sort";
 
 export default function CustomerDetailPage() {
   const params = useParams<{ wechat_id: string }>();
   const wechatId = decodeURIComponent(params.wechat_id);
-  const [customers] = useState(() => getCustomers());
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const data = await getCustomers();
+        if (active) setCustomers(data);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const customer = useMemo(() => customers.find((c) => c.wechat_id === wechatId), [customers, wechatId]);
   const sortedHistory = useMemo(
     () => [...(customer?.order_history ?? [])].sort(sortByRecentDate),
     [customer]
   );
 
+  if (loading) return <div className="rounded-xl bg-white p-4 text-sm text-zinc-500 shadow-sm">正在加载...</div>;
   if (!customer) return <div className="rounded-xl bg-white p-4 shadow-sm">客户不存在</div>;
 
   const copyHistory = async () => {

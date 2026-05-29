@@ -1,12 +1,32 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getSavedJielongs } from "@/lib/storage";
-import { buildProductAnalytics } from "@/lib/productAnalytics";
+import { buildProductAnalytics, ProductAnalyticsRow } from "@/lib/productAnalytics";
 
 export default function AnalyticsPage() {
   const [query, setQuery] = useState("");
-  const rows = useMemo(() => buildProductAnalytics(getSavedJielongs()), []);
+  const [rows, setRows] = useState<ProductAnalyticsRow[]>([]);
+  const [batchCount, setBatchCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const saved = await getSavedJielongs();
+        if (!active) return;
+        setRows(buildProductAnalytics(saved));
+        setBatchCount(saved.length);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const filtered = useMemo(
     () =>
       rows.filter((r) =>
@@ -16,6 +36,14 @@ export default function AnalyticsPage() {
   );
   const totalSales = filtered.reduce((s, r) => s + r.total_revenue, 0);
   const top = filtered[0];
+
+  if (loading) {
+    return (
+      <div className="rounded-xl bg-white p-4 shadow-sm">
+        <p className="text-sm text-zinc-500">正在加载...</p>
+      </div>
+    );
+  }
 
   const copy = async () => {
     const table = [
@@ -40,7 +68,7 @@ export default function AnalyticsPage() {
         <h1 className="text-xl font-bold">产品分析</h1>
       </div>
       <div className="grid gap-2 sm:grid-cols-4">
-        <div className="rounded bg-white p-3 shadow-sm text-sm">历史接龙数量: {getSavedJielongs().length}</div>
+        <div className="rounded bg-white p-3 shadow-sm text-sm">历史接龙数量: {batchCount}</div>
         <div className="rounded bg-white p-3 shadow-sm text-sm">总商品销量: {filtered.reduce((s, r) => s + r.total_quantity, 0)}</div>
         <div className="rounded bg-white p-3 shadow-sm text-sm">总销售额: {(Math.round(totalSales * 10) / 10).toFixed(1)}</div>
         <div className="rounded bg-white p-3 shadow-sm text-sm">被点最多: {top ? `${top.cake_name} (${top.total_quantity})` : "-"}</div>

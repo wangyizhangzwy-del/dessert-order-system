@@ -978,6 +978,54 @@ Use mounted/client guards when needed.
 
 ---
 
+## 数据存储后端（localStorage / Supabase 双后端）
+
+为了在 Vercel 多设备共享数据，新增了 Supabase 后端，并保留 localStorage 作为默认/回退。
+
+### 后端切换
+* 由环境变量 `NEXT_PUBLIC_DATA_BACKEND` 决定：
+  * `=supabase` → 走云端 API（多设备共享）。
+  * 未设置 / 其他值 → 使用本机 localStorage（与旧版行为一致）。
+* `lib/storage.ts` 是统一的「异步」外观层，根据上面的开关分发到：
+  * `lib/storageLocal.ts`（localStorage 实现）。
+  * `lib/dataClient.ts`（调用 `/api/*` 的客户端）。
+* 重要：所有 storage 读写函数现在都是 `async`（返回 Promise）。页面已改为 `useEffect` 异步加载 + loading 占位。
+
+### 架构（安全）
+* 客户端 **不直接** 连接 Supabase。
+* 浏览器 → Next.js Route Handlers（`app/api/*`） → Supabase（`service_role` 密钥，仅服务端）。
+* `service_role` 密钥只在服务端环境变量，绝不使用 `NEXT_PUBLIC_`。
+* API 路由鉴权：若服务端设置了 `APP_PASSWORD`，请求需带 `x-app-password` 头（客户端发送 `NEXT_PUBLIC_APP_PASSWORD` 的值）；未设置则放行（仅本地/开发）。
+* RLS 全部开启且无公开策略，只有 `service_role`（服务端）可读写。
+
+### Supabase 数据表
+* `batches`：历史接龙，订单的唯一真源。标量列（batch_id 唯一、batch_name、order_date、total_amount、warning_count、failed_count、ignore_example_order、created_at、updated_at）+ `payload jsonb`（完整 SavedJielong）。
+* `customers`：客户档案 + `order_history jsonb`（wechat_id 唯一）。
+* `app_settings`：单行（id=1）共享设置。
+* `app_draft`：单行（id=1）共享草稿，跨设备同步，**last-write-wins**。
+* 建表脚本见 `supabase/schema.sql`。
+* 客户历史的合并逻辑抽到纯函数 `lib/customerHistory.ts`，本地与服务端复用。
+* 产品分析 / 业绩分析仍由 `batches` 派生（`buildProductAnalytics` / `buildPerformanceAnalytics` 未改），只是数据来源改为云端读取。
+
+### JSON 导出 / 导入 与迁移
+* 导出 / 导入在两种后端都可用：云端走 `/api/export`、`/api/import`。
+* 云端导入按 `batch_id` / `wechat_id` **合并 upsert**（幂等，不产生重复，不删除未包含的数据）。
+* 数据备份页提供「迁移本机数据到云端」按钮：读取本机 localStorage（始终用 `readLocalRawForMigration` 读本地）→ 上传 `/api/import`，可重复执行。
+
+### 环境变量（见 `.env.example`）
+* `NEXT_PUBLIC_APP_PASSWORD`：访问密码门（客户端）。
+* `NEXT_PUBLIC_DATA_BACKEND`：`supabase` 启用云端。
+* `SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`：服务端（云端必填）。
+* `APP_PASSWORD`：服务端授权 API 的密码（建议与 `NEXT_PUBLIC_APP_PASSWORD` 相同）。
+
+### Supabase 启用步骤
+1. 新建 Supabase 项目，记录 Project URL 与 `service_role` 密钥。
+2. 在 SQL Editor 运行 `supabase/schema.sql`（建表 + 开启 RLS）。
+3. 在 Vercel（及本地 `.env.local`）配置上面 4 个 Supabase 相关变量，并设 `NEXT_PUBLIC_DATA_BACKEND=supabase`。
+4. 部署后用「数据备份 → 迁移本机数据到云端」把旧的本机历史上传。
+
+---
+
 ## Current Next Priorities
 
 When continuing development, check:

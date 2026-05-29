@@ -4,6 +4,7 @@ import { MouseEvent, Suspense, useEffect, useMemo, useRef, useState } from "reac
 import { parseWechatRelay } from "@/lib/parser";
 import {
   getSavedJielongById,
+  isCloudBackend,
   saveDraft,
   saveJielong,
 } from "@/lib/storage";
@@ -86,6 +87,18 @@ function compactNotes(input: string): string {
   const giftMatch = cleaned.match(/送\s*(\d+)/);
   if (giftMatch) return giftMatch[1];
   return cleaned;
+}
+
+// 备注分类（用于客户汇总预览排序）：
+// 公寓楼名（如 送888/888、送f8/f8，"送"前缀视为同一栋）放最上面并按楼名分组，
+// 其次自取，再次叫车，最后无备注/其他。
+function deliveryNoteKey(rawNotes: string): { category: number; group: string } {
+  const note = (rawNotes ?? "").trim();
+  if (!note) return { category: 3, group: "" };
+  const core = note.replace(/^送\s*/, "").replace(/\s+/g, "").toLowerCase();
+  if (core.includes("自取")) return { category: 1, group: "自取" };
+  if (core.includes("叫车") || core.includes("打车")) return { category: 2, group: "叫车" };
+  return { category: 0, group: core };
 }
 
 // 产品名一律使用本次菜单解析出的标准名（display_name / cake_name），不做永久硬编码映射。
@@ -192,28 +205,15 @@ function RecognizePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const editingBatchId = searchParams.get("batch_id");
-  const initialSaved = editingBatchId ? getSavedJielongById(editingBatchId) : undefined;
-  const [rawText, setRawText] = useState(initialSaved?.raw_text ?? "");
-  const [orderDate, setOrderDate] = useState(initialSaved?.order_date ?? "5.28");
-  const [message, setMessage] = useState(initialSaved ? "已加载历史接龙，可继续编辑" : "");
-  const [rows, setRows] = useState<EditableRow[]>((initialSaved?.editable_rows as EditableRow[]) ?? []);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(initialSaved?.menu_items ?? []);
-  const [customerFlags, setCustomerFlags] = useState<Record<string, CustomerFlags>>(() => {
-    const flags: Record<string, CustomerFlags> = {};
-    initialSaved?.grouped_excel_rows?.forEach((r) => {
-      if (!r.customer) return;
-      flags[r.customer] = {
-        delivered: r.delivery_status === "已送达",
-        paid: r.payment_status === "已付款",
-      };
-    });
-    return flags;
-  });
+  const [rawText, setRawText] = useState("");
+  const [orderDate, setOrderDate] = useState("5.28");
+  const [message, setMessage] = useState("");
+  const [rows, setRows] = useState<EditableRow[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [customerFlags, setCustomerFlags] = useState<Record<string, CustomerFlags>>({});
   const [tableExpanded, setTableExpanded] = useState(false);
-  const [batchName, setBatchName] = useState(initialSaved?.batch_name ?? `接龙-${new Date().toLocaleString()}`);
-  const [currentBatchId, setCurrentBatchId] = useState<string | null>(
-    initialSaved?.batch_id ?? editingBatchId ?? null
-  );
+  const [batchName, setBatchName] = useState(`接龙-${new Date().toLocaleString()}`);
+  const [currentBatchId, setCurrentBatchId] = useState<string | null>(editingBatchId ?? null);
   const [highlightRowId, setHighlightRowId] = useState<string>("");
   const [warningJumpIdx, setWarningJumpIdx] = useState(0);
   const [failedJumpIdx, setFailedJumpIdx] = useState(0);
@@ -223,6 +223,34 @@ function RecognizePageInner() {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!editingBatchId) return;
+    let active = true;
+    (async () => {
+      const saved = await getSavedJielongById(editingBatchId);
+      if (!active || !saved) return;
+      setRawText(saved.raw_text ?? "");
+      setOrderDate(saved.order_date ?? "5.28");
+      setRows((saved.editable_rows as EditableRow[]) ?? []);
+      setMenuItems(saved.menu_items ?? []);
+      setBatchName(saved.batch_name ?? `接龙-${new Date().toLocaleString()}`);
+      setCurrentBatchId(saved.batch_id);
+      const flags: Record<string, CustomerFlags> = {};
+      saved.grouped_excel_rows?.forEach((r) => {
+        if (!r.customer) return;
+        flags[r.customer] = {
+          delivered: r.delivery_status === "已送达",
+          paid: r.payment_status === "已付款",
+        };
+      });
+      setCustomerFlags(flags);
+      setMessage("已加载历史接龙，可继续编辑");
+    })();
+    return () => {
+      active = false;
+    };
+  }, [editingBatchId]);
 
   const onParse = () => {
     if (!rawText.trim()) {
@@ -298,6 +326,21 @@ function RecognizePageInner() {
       status: v.status,
     }));
   }, [effectiveRows]);
+
+  // 客户汇总预览按备注分组排序：公寓楼（送888/888、送f8/f8 同栋）在最上面并按楼名相邻，
+  // 然后自取，再然后叫车，最后无备注/其他。
+  const customerSummaryByNotes = useMemo(
+    () =>
+      customerSummary
+        .map((row, idx) => ({ row, idx, key: deliveryNoteKey(row.notes) }))
+        .sort((a, b) => {
+          if (a.key.category !== b.key.category) return a.key.category - b.key.category;
+          if (a.key.group !== b.key.group) return a.key.group.localeCompare(b.key.group, "zh-Hans-CN");
+          return a.idx - b.idx;
+        })
+        .map((x) => x.row),
+    [customerSummary]
+  );
 
   const productionSummary = useMemo(() => {
     const map = new Map<string, ProductionSummaryRow>();
@@ -546,7 +589,7 @@ function RecognizePageInner() {
   const copyCustomerSummary = async () => {
     const table = [
       ["客户", "商品汇总", "客户总金额", "备注", "状态"],
-      ...customerSummary.map((c) => [
+      ...customerSummaryByNotes.map((c) => [
         c.wechat_id,
         c.items_summary,
         formatMoney(c.customer_total),
@@ -591,10 +634,10 @@ function RecognizePageInner() {
     }
   };
 
-  const saveBatch = () => {
+  const saveBatch = async () => {
     try {
       const orders = buildCurrentOrders();
-      saveDraft({ raw_text: rawText, menu_items: menuItems, orders });
+      await saveDraft({ raw_text: rawText, menu_items: menuItems, orders });
       const groupedRows = buildGroupedExcelRows();
       const batchId = currentBatchId ?? `batch_${Date.now()}`;
       const payload = {
@@ -622,12 +665,21 @@ function RecognizePageInner() {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      const saved = saveJielong(payload);
+      const saved = await saveJielong(payload);
       setCurrentBatchId(saved.batch_id);
       router.replace(`/recognize?batch_id=${saved.batch_id}`);
-      setMessage("已保存本次接龙（可在历史接龙继续编辑）");
-    } catch {
-      setMessage("保存失败，请重试");
+      setMessage(
+        isCloudBackend()
+          ? "已保存到云端 Supabase（可在历史接龙继续编辑）"
+          : "已保存到本机（可在历史接龙继续编辑）"
+      );
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      setMessage(
+        isCloudBackend()
+          ? `保存到云端失败，数据未写入 Supabase：${detail}`
+          : `保存失败，请重试：${detail}`
+      );
     }
   };
 
@@ -885,7 +937,7 @@ function RecognizePageInner() {
               </tr>
             </thead>
             <tbody>
-              {customerSummary.map((row) => (
+              {customerSummaryByNotes.map((row) => (
                 <tr key={`cs_${row.wechat_id}`}>
                   <td className="border px-2 py-1">{row.wechat_id}</td>
                   <td className="border px-2 py-1">{row.items_summary}</td>
@@ -929,6 +981,12 @@ function RecognizePageInner() {
 
       <div className="rounded-xl bg-white p-4 shadow-sm">
         <h2 className="text-lg font-semibold">统计与保存</h2>
+        <p className="mt-2 text-sm">
+          数据存储：
+          <span className={`font-semibold ${isCloudBackend() ? "text-emerald-700" : "text-amber-700"}`}>
+            {isCloudBackend() ? "云端 Supabase（多设备共享）" : "本机 localStorage（仅本设备）"}
+          </span>
+        </p>
         <p className="mt-2 text-sm">总销售额：<span className="font-semibold">{formatMoney(totalSales)}</span></p>
         <p className="text-sm">warning 数量：<span className="font-semibold text-amber-700">{warningCount}</span></p>
         <p className="text-sm">failed 数量：<span className="font-semibold text-red-700">{failedCount}</span></p>

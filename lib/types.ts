@@ -97,6 +97,20 @@ export interface AppSettings {
   ignoreExampleOrder: boolean;
 }
 
+export interface DraftPayload {
+  raw_text: string;
+  menu_items: MenuItem[];
+  orders: ParsedOrder[];
+}
+
+export interface BackupData {
+  version: string;
+  exported_at: string;
+  saved_jielongs: SavedJielong[];
+  customers: Customer[];
+  app_settings: AppSettings;
+}
+
 export interface SavedJielong {
   batch_id: string;
   batch_name: string;

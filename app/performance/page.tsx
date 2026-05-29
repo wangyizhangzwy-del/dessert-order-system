@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { getSavedJielongs } from "@/lib/storage";
-import { buildPerformanceAnalytics } from "@/lib/performanceAnalytics";
+import { buildPerformanceAnalytics, PerformanceSummary } from "@/lib/performanceAnalytics";
 import { BarChart, ChartLegend, LineChart } from "@/app/components/Charts";
 
 function formatMoney(n: number): string {
@@ -15,15 +15,20 @@ const CUSTOMER_COLOR = "#0ea5e9";
 const REVENUE_COLOR = "#10b981";
 
 export default function PerformancePage() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const [data, setData] = useState<PerformanceSummary | null>(null);
 
-  const data = useMemo(
-    () => (mounted ? buildPerformanceAnalytics(getSavedJielongs()) : null),
-    [mounted]
-  );
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const saved = await getSavedJielongs();
+      if (active) setData(buildPerformanceAnalytics(saved));
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
-  if (!mounted || !data) {
+  if (!data) {
     return (
       <div className="rounded-xl bg-white p-4 shadow-sm">
         <p className="text-sm text-zinc-500">正在加载...</p>
