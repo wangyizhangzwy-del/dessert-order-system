@@ -105,24 +105,44 @@ function deliveryNoteKey(rawNotes: string): { category: number; group: string } 
   return { category: 0, group: core };
 }
 
-// 产品名一律使用本次菜单解析出的标准名
-function getShortProductName(row: EditableRow): string {
-  if (row.sku_code.trim() === "1") {
-    const variant = row.variant.trim();
-    return variant ? `${variant}小贝` : row.display_name || row.cake_name || "肉松小贝";
+/** 订单记录表显示完整原始商品名（非 normalized、非仅 SKU）。 */
+function getOrderRecordProductName(row: EditableRow): string {
+  if (row.sku_code.trim() === "1" && row.variant.trim()) {
+    return row.display_name.trim() || `${row.variant.trim()}小贝`;
   }
   if (row.sku_code.trim() === "8" && row.flavor_combo?.trim()) {
     const base = row.cake_name.trim() || row.display_name.trim();
-    return `${base}（${row.flavor_combo.trim()}）`;
+    return base.includes(row.flavor_combo.trim())
+      ? base
+      : `${base}（${row.flavor_combo.trim()}）`;
   }
-  return row.display_name.trim() || row.cake_name.trim() || `SKU ${row.sku_code || "-"}`;
+  return row.cake_name.trim() || row.display_name.trim();
+}
+
+function customerKey(wechatId: string): string {
+  return wechatId.trim() || "未填写微信号";
+}
+
+/** 同一客户订单的制作状态保持一致（加载历史接龙时归一化）。 */
+function normalizeProductionStatusByCustomer(rows: EditableRow[]): EditableRow[] {
+  const statusByCustomer = new Map<string, string>();
+  for (const row of rows) {
+    const key = customerKey(row.wechat_id);
+    if (!statusByCustomer.has(key)) {
+      statusByCustomer.set(key, row.production_status ?? "未制作");
+    }
+  }
+  return rows.map((row) => ({
+    ...row,
+    production_status: statusByCustomer.get(customerKey(row.wechat_id)) ?? "未制作",
+  }));
 }
 
 function statusSelectClass(
   kind: "production" | "delivery" | "payment",
   value: string
 ): string {
-  const base = "w-full rounded border p-0.5 text-[11px] text-center";
+  const base = "w-full min-w-0 rounded border px-1 py-1 text-xs text-center";
   if (kind === "production" && value === "已制作") {
     return `${base} border-red-200 bg-red-50 text-red-700`;
   }
@@ -271,10 +291,12 @@ function RecognizePageInner() {
       if (!active || !saved) return;
       setRawText(saved.raw_text ?? "");
       setOrderDate(saved.order_date ?? defaultOrderDateString());
-      const loadedRows = ((saved.editable_rows as EditableRow[]) ?? []).map((r) => ({
-        ...r,
-        production_status: r.production_status ?? "未制作",
-      }));
+      const loadedRows = normalizeProductionStatusByCustomer(
+        ((saved.editable_rows as EditableRow[]) ?? []).map((r) => ({
+          ...r,
+          production_status: r.production_status ?? "未制作",
+        }))
+      );
       setRows(loadedRows);
       setMenuItems(saved.menu_items ?? []);
       setBatchName(saved.batch_name ?? generateBatchName(saved.order_date ?? defaultOrderDateString()));
@@ -425,14 +447,30 @@ function RecognizePageInner() {
   };
 
   const orderRecordEntries = useMemo(() => {
-    const entries: { row: EditableRow; isFirst: boolean; customerTotal: number; wechatId: string }[] = [];
+    const entries: {
+      row: EditableRow;
+      isFirst: boolean;
+      rowSpan: number;
+      customerTotal: number;
+      wechatId: string;
+      productionStatus: string;
+    }[] = [];
     for (const customer of customerSummary) {
       const wechatId = customer.wechat_id;
       const customerRows = effectiveRows.filter(
-        (r) => (r.wechat_id.trim() || "未填写微信号") === wechatId
+        (r) => customerKey(r.wechat_id) === wechatId
       );
+      const rowSpan = Math.max(customerRows.length, 1);
+      const productionStatus = customerRows[0]?.production_status || "未制作";
       customerRows.forEach((row, idx) => {
-        entries.push({ row, isFirst: idx === 0, customerTotal: customer.customer_total, wechatId });
+        entries.push({
+          row,
+          isFirst: idx === 0,
+          rowSpan,
+          customerTotal: customer.customer_total,
+          wechatId,
+          productionStatus,
+        });
       });
     }
     return entries;
@@ -597,14 +635,14 @@ function RecognizePageInner() {
         output.push({
           date: idx === 0 ? formatDateWithWeekday(orderDate) : "",
           customer: idx === 0 ? wechatId : "",
-          product: getShortProductName(row),
+          product: getOrderRecordProductName(row),
           quantity: String(row.quantity),
           unit_price: formatPrice(row.unit_price),
           customer_total: idx === 0 ? formatMoney(customer.customer_total) : "",
           notes: idx === 0 ? compactNotes(notes) : "",
           delivery_status: idx === 0 ? (flags.delivered ? "已送达" : "未送达") : "",
           payment_status: idx === 0 ? (flags.paid ? "已付款" : "未付款") : "",
-          production_status: row.production_status || "未制作",
+          production_status: idx === 0 ? (customerRows[0]?.production_status || "未制作") : "",
         });
       });
       output.push({
@@ -795,9 +833,10 @@ function RecognizePageInner() {
     );
   };
 
-  const updateProductionStatus = (rowId: string, production_status: string) => {
+  const updateProductionStatus = (wechatId: string, production_status: string) => {
+    const key = customerKey(wechatId);
     setRows((prev) =>
-      prev.map((r) => (r.row_id === rowId ? { ...r, production_status } : r))
+      prev.map((r) => (customerKey(r.wechat_id) === key ? { ...r, production_status } : r))
     );
   };
 
@@ -990,22 +1029,34 @@ function RecognizePageInner() {
           </button>
         </div>
         <div
-          className={`mt-3 overflow-x-auto overflow-y-auto border rounded ${
-            tableExpanded ? "max-h-none" : "max-h-[420px]"
+          className={`mt-3 overflow-x-auto overflow-y-auto rounded border ${
+            tableExpanded ? "max-h-none" : "max-h-[480px]"
           }`}
         >
-          <table className="w-full table-fixed border-collapse text-xs">
+          <table className="min-w-[1280px] w-max border-collapse text-sm">
+            <colgroup>
+              <col className="w-[104px]" />
+              <col className="w-[120px]" />
+              <col className="min-w-[300px]" />
+              <col className="w-[56px]" />
+              <col className="w-[80px]" />
+              <col className="w-[96px]" />
+              <col className="min-w-[180px]" />
+              <col className="w-[92px]" />
+              <col className="w-[92px]" />
+              <col className="w-[92px]" />
+            </colgroup>
             <thead>
               <tr className="bg-zinc-100">
                 {["日期", "客户", "商品", "数量", "单价(美金)", "总金额(美金)", "备注", "制作状态", "配送状态", "付款状态"].map((h) => (
-                  <th key={h} className="sticky top-0 z-10 border bg-zinc-100 px-1 py-2 text-left font-medium">
+                  <th key={h} className="sticky top-0 z-10 whitespace-nowrap border bg-zinc-100 px-2 py-2 text-left font-medium">
                     {h}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {orderRecordEntries.map(({ row, isFirst, customerTotal, wechatId }) => (
+              {orderRecordEntries.map(({ row, isFirst, rowSpan, customerTotal, wechatId, productionStatus }) => (
                 <tr
                   key={row.row_id}
                   ref={(el) => {
@@ -1023,35 +1074,51 @@ function RecognizePageInner() {
                             : "bg-white"
                   }
                 >
-                  <td className="border px-1 py-1 truncate">{isFirst ? formatDateWithWeekday(orderDate) : ""}</td>
-                  <td className="border px-1 py-1 truncate">{isFirst ? row.wechat_id : ""}</td>
-                  <td className="border px-1 py-1 truncate" title={getShortProductName(row)}>
-                    {getShortProductName(row)}
+                  {isFirst ? (
+                    <td rowSpan={rowSpan} className="border px-2 py-2 align-top whitespace-nowrap">
+                      {formatDateWithWeekday(orderDate)}
+                    </td>
+                  ) : null}
+                  {isFirst ? (
+                    <td rowSpan={rowSpan} className="border px-2 py-2 align-top">
+                      {row.wechat_id}
+                    </td>
+                  ) : null}
+                  <td className="border px-2 py-2 align-top whitespace-normal break-words">
+                    {getOrderRecordProductName(row)}
                   </td>
-                  <td className="border px-1 py-1 text-center">{row.quantity}</td>
-                  <td className="border px-1 py-1 text-right">{formatPrice(row.unit_price)}</td>
-                  <td className="border px-1 py-1 text-right">{isFirst ? formatMoney(customerTotal) : ""}</td>
-                  <td className="border px-1 py-1">
-                    {isFirst ? (
+                  <td className="border px-2 py-2 text-center align-top">{row.quantity}</td>
+                  <td className="border px-2 py-2 text-right align-top whitespace-nowrap">
+                    {formatPrice(row.unit_price)}
+                  </td>
+                  {isFirst ? (
+                    <td rowSpan={rowSpan} className="border px-2 py-2 text-right align-top whitespace-nowrap">
+                      {formatMoney(customerTotal)}
+                    </td>
+                  ) : null}
+                  {isFirst ? (
+                    <td rowSpan={rowSpan} className="border px-2 py-2 align-top">
                       <input
-                        className="w-full rounded border p-0.5 text-xs"
+                        className="w-full min-w-[140px] rounded border px-1.5 py-1 text-sm"
                         value={getCustomerNotes(wechatId, row.notes)}
                         onChange={(e) => updateCustomerNotes(wechatId, e.target.value)}
                       />
-                    ) : null}
-                  </td>
-                  <td className="border px-1 py-1 text-center">
-                    <select
-                      className={statusSelectClass("production", row.production_status || "未制作")}
-                      value={row.production_status || "未制作"}
-                      onChange={(e) => updateProductionStatus(row.row_id, e.target.value)}
-                    >
-                      <option value="未制作">未制作</option>
-                      <option value="已制作">已制作</option>
-                    </select>
-                  </td>
-                  <td className="border px-1 py-1 text-center">
-                    {isFirst ? (
+                    </td>
+                  ) : null}
+                  {isFirst ? (
+                    <td rowSpan={rowSpan} className="border px-2 py-2 text-center align-top">
+                      <select
+                        className={statusSelectClass("production", productionStatus)}
+                        value={productionStatus}
+                        onChange={(e) => updateProductionStatus(wechatId, e.target.value)}
+                      >
+                        <option value="未制作">未制作</option>
+                        <option value="已制作">已制作</option>
+                      </select>
+                    </td>
+                  ) : null}
+                  {isFirst ? (
+                    <td rowSpan={rowSpan} className="border px-2 py-2 text-center align-top">
                       <select
                         className={statusSelectClass(
                           "delivery",
@@ -1065,10 +1132,10 @@ function RecognizePageInner() {
                         <option value="未送达">未送达</option>
                         <option value="已送达">已送达</option>
                       </select>
-                    ) : null}
-                  </td>
-                  <td className="border px-1 py-1 text-center">
-                    {isFirst ? (
+                    </td>
+                  ) : null}
+                  {isFirst ? (
+                    <td rowSpan={rowSpan} className="border px-2 py-2 text-center align-top">
                       <select
                         className={statusSelectClass(
                           "payment",
@@ -1080,8 +1147,8 @@ function RecognizePageInner() {
                         <option value="未付款">未付款</option>
                         <option value="已付款">已付款</option>
                       </select>
-                    ) : null}
-                  </td>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
