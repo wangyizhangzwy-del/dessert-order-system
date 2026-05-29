@@ -38,6 +38,7 @@ export default function BatchesPage() {
   }, []);
 
   const handleDelete = async (batchId: string) => {
+    if (!window.confirm("确定删除此历史接龙？删除后无法恢复。")) return;
     try {
       await deleteJielong(batchId);
       const saved = await getSavedJielongs();
@@ -74,20 +75,28 @@ export default function BatchesPage() {
       ) : (
         batches.map((batch) => (
           <div key={batch.batch_id} className="rounded-xl bg-white p-4 shadow-sm">
-            <Link href={`/recognize?batch_id=${batch.batch_id}`} className="block">
-              <p className="font-semibold">{nameMap.get(batch.batch_id) ?? batch.batch_name}</p>
-              <p className="text-sm text-zinc-600">
-                {batch.order_date} · {(batch.total_amount ?? 0).toFixed(1)} · 客户 {(batch.customer_summary_rows ?? []).length}
-              </p>
-            </Link>
-            <div className="mt-2 flex gap-2">
-              <Link href={`/recognize?batch_id=${batch.batch_id}`} className="rounded bg-zinc-900 px-3 py-1 text-xs text-white">打开</Link>
-              <button
-                onClick={() => handleDelete(batch.batch_id)}
-                className="rounded bg-red-100 px-3 py-1 text-xs text-red-700"
-              >
-                删除
-              </button>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold">{nameMap.get(batch.batch_id) ?? batch.batch_name}</p>
+                <p className="text-sm text-zinc-600">
+                  {batch.order_date} · {(batch.total_amount ?? 0).toFixed(1)} · 客户{" "}
+                  {(batch.customer_summary_rows ?? []).length}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  onClick={() => handleDelete(batch.batch_id)}
+                  className="rounded-md bg-zinc-200 px-2.5 py-1.5 text-xs text-zinc-600 hover:bg-zinc-300"
+                >
+                  删除
+                </button>
+                <Link
+                  href={`/recognize?batch_id=${batch.batch_id}`}
+                  className="rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800"
+                >
+                  打开
+                </Link>
+              </div>
             </div>
           </div>
         ))

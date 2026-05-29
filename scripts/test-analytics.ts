@@ -73,6 +73,7 @@ function checks(): string[] {
   if (result.totalCustomers !== 4) errors.push(`总客户数应为 4（唯一），实际 ${result.totalCustomers}`);
   if (result.avgOrderValue !== 30) errors.push(`平均客单价应为 30，实际 ${result.avgOrderValue}`);
   if (result.totalQuantity !== 15) errors.push(`总商品数量应为 15，实际 ${result.totalQuantity}`);
+  if (result.totalBatches !== 3) errors.push(`总接龙数应为 3，实际 ${result.totalBatches}`);
 
   const dates = result.daily.map((d) => d.date);
   if (dates.join(",") !== "5.27,5.28") errors.push(`daily 应按日期升序 [5.27,5.28]，实际 [${dates.join(",")}]`);

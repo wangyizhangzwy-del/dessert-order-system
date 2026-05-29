@@ -15,6 +15,7 @@ export interface PerformanceSummary {
   totalCustomers: number;
   avgOrderValue: number;
   totalQuantity: number;
+  totalBatches: number;
   daily: DailyPerformance[];
 }
 
@@ -84,6 +85,7 @@ export function buildPerformanceAnalytics(saved: SavedJielong[]): PerformanceSum
     totalCustomers: allCustomers.size,
     avgOrderValue: totalOrders > 0 ? roundMoney(totalRevenue / totalOrders) : 0,
     totalQuantity,
+    totalBatches: (saved ?? []).length,
     daily,
   };
 }

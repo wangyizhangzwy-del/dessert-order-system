@@ -126,6 +126,8 @@ export interface SavedJielong {
     customer_total: number;
     notes: string;
     status: ParseStatus;
+    delivery_mode?: "default" | "pickup" | "custom";
+    delivery_custom?: string;
   }[];
   production_summary_rows: {
     key: string;

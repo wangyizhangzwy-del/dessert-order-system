@@ -28,12 +28,15 @@ export function BarChart({
   labels,
   series,
   formatValue = (n) => String(n),
+  yAxisLabel = "销售额",
 }: {
   labels: string[];
   series: ChartSeries[];
   formatValue?: (n: number) => string;
+  yAxisLabel?: string;
 }) {
   const width = chartWidth(labels.length);
+  const leftPad = 36;
   const max = axisMax(series.flatMap((s) => s.values));
   const groupW = SLOT_W * 0.6;
   const barW = groupW / Math.max(series.length, 1);
@@ -42,9 +45,13 @@ export function BarChart({
   return (
     <div className="overflow-x-auto">
       <svg width={width} height={HEIGHT} className="block" role="img">
-        <line x1={0} y1={baseline} x2={width} y2={baseline} stroke="#e4e4e7" />
+        <line x1={leftPad} y1={PAD_TOP} x2={leftPad} y2={baseline} stroke="#e4e4e7" />
+        <line x1={leftPad} y1={baseline} x2={width} y2={baseline} stroke="#e4e4e7" />
+        <text x={8} y={PAD_TOP + 8} fontSize="10" fill="#71717a" transform={`rotate(-90 8 ${PAD_TOP + 8})`}>
+          {yAxisLabel}
+        </text>
         {labels.map((label, i) => {
-          const slotX = 20 + i * SLOT_W;
+          const slotX = leftPad + i * SLOT_W;
           return (
             <Fragment key={`${label}-${i}`}>
               {series.map((s, si) => {
@@ -68,7 +75,7 @@ export function BarChart({
                   </Fragment>
                 );
               })}
-              <text x={slotX + SLOT_W / 2} y={HEIGHT - 11} textAnchor="middle" fontSize="11" fill="#71717a">
+              <text x={slotX + SLOT_W / 2} y={HEIGHT - 11} textAnchor="middle" fontSize="10" fill="#71717a">
                 {label}
               </text>
             </Fragment>
@@ -85,23 +92,30 @@ export function LineChart({
   values,
   color = "#10b981",
   formatValue = (n) => String(n),
+  yAxisLabel = "销售额",
 }: {
   labels: string[];
   values: number[];
   color?: string;
   formatValue?: (n: number) => string;
+  yAxisLabel?: string;
 }) {
   const width = chartWidth(labels.length);
   const max = axisMax(values);
   const baseline = PAD_TOP + PLOT_H;
-  const pointX = (i: number) => 20 + i * SLOT_W + SLOT_W / 2;
+  const leftPad = 36;
+  const pointX = (i: number) => leftPad + i * SLOT_W + SLOT_W / 2;
   const pointY = (v: number) => baseline - (v / max) * PLOT_H;
   const path = values.map((v, i) => `${i === 0 ? "M" : "L"} ${pointX(i)} ${pointY(v)}`).join(" ");
 
   return (
     <div className="overflow-x-auto">
       <svg width={width} height={HEIGHT} className="block" role="img">
-        <line x1={0} y1={baseline} x2={width} y2={baseline} stroke="#e4e4e7" />
+        <line x1={leftPad} y1={PAD_TOP} x2={leftPad} y2={baseline} stroke="#e4e4e7" />
+        <line x1={leftPad} y1={baseline} x2={width} y2={baseline} stroke="#e4e4e7" />
+        <text x={8} y={PAD_TOP + 8} fontSize="10" fill="#71717a" transform={`rotate(-90 8 ${PAD_TOP + 8})`}>
+          {yAxisLabel}
+        </text>
         {values.length > 1 ? <path d={path} fill="none" stroke={color} strokeWidth={2} /> : null}
         {values.map((v, i) => (
           <Fragment key={`${labels[i]}-${i}`}>
@@ -109,7 +123,7 @@ export function LineChart({
             <text x={pointX(i)} y={pointY(v) - 9} textAnchor="middle" fontSize="11" fontWeight="600" fill="#3f3f46">
               {formatValue(v)}
             </text>
-            <text x={pointX(i)} y={HEIGHT - 11} textAnchor="middle" fontSize="11" fill="#71717a">
+            <text x={pointX(i)} y={HEIGHT - 11} textAnchor="middle" fontSize="10" fill="#71717a">
               {labels[i]}
             </text>
           </Fragment>

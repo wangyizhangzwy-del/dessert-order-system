@@ -5,13 +5,13 @@ import { parseWechatRelay } from "@/lib/parser";
 import {
   clearDraft,
   deleteJielong,
+  getCustomers,
   getSavedJielongById,
   isCloudBackend,
   saveDraft,
   saveJielong,
 } from "@/lib/storage";
 import { IGNORE_LUMI_EXAMPLE_ORDER } from "@/lib/constants";
-import { deliveryStatusSelectClass, paymentStatusSelectClass } from "@/lib/statusStyles";
 import { TEST_RELAY_TEXT } from "@/lib/testRelay";
 import { MenuItem, ParsedOrder } from "@/lib/types";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -73,6 +73,13 @@ interface CustomerFlags {
   paid: boolean;
 }
 
+type DeliveryMode = "default" | "pickup" | "custom";
+
+interface DeliveryModeState {
+  mode: DeliveryMode;
+  customText: string;
+}
+
 function roundMoney(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
@@ -103,6 +110,21 @@ function deliveryNoteKey(rawNotes: string): { category: number; group: string } 
   if (core.includes("自取")) return { category: 1, group: "自取" };
   if (core.includes("叫车") || core.includes("打车")) return { category: 2, group: "叫车" };
   return { category: 0, group: core };
+}
+
+function inferDeliveryMode(notes: string, defaultAddr?: string): DeliveryModeState {
+  const n = (notes ?? "").trim();
+  if (n.includes("自取")) return { mode: "pickup", customText: "" };
+  if (n && defaultAddr && n === defaultAddr) return { mode: "default", customText: "" };
+  if (n) return { mode: "custom", customText: n };
+  if (defaultAddr) return { mode: "default", customText: "" };
+  return { mode: "default", customText: "" };
+}
+
+function deliveryModeLabel(state: DeliveryModeState, defaultAddr?: string): string {
+  if (state.mode === "pickup") return "自取";
+  if (state.mode === "custom") return state.customText.trim() || "自定义";
+  return defaultAddr?.trim() || "默认地址";
 }
 
 // 产品名一律使用本次菜单解析出的标准名（display_name / cake_name），不做永久硬编码映射。
@@ -226,6 +248,8 @@ function RecognizePageInner() {
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
   const [mounted, setMounted] = useState(false);
   const [customerNotesEdits, setCustomerNotesEdits] = useState<Record<string, string>>({});
+  const [customerAddresses, setCustomerAddresses] = useState<Record<string, string>>({});
+  const [deliveryModes, setDeliveryModes] = useState<Record<string, DeliveryModeState>>({});
   const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [autosaveError, setAutosaveError] = useState("");
   const skipAutosaveRef = useRef(true);
@@ -234,6 +258,14 @@ function RecognizePageInner() {
 
   useEffect(() => {
     setMounted(true);
+    (async () => {
+      const customers = await getCustomers();
+      const addrMap: Record<string, string> = {};
+      for (const c of customers) {
+        if (c.default_address) addrMap[c.wechat_id] = c.default_address;
+      }
+      setCustomerAddresses(addrMap);
+    })();
   }, []);
 
   useEffect(() => {
@@ -262,10 +294,29 @@ function RecognizePageInner() {
       });
       setCustomerFlags(flags);
       const notesEdits: Record<string, string> = {};
+      const modes: Record<string, DeliveryModeState> = {};
       saved.customer_summary_rows?.forEach((c) => {
         if (c.notes) notesEdits[c.wechat_id] = c.notes;
+        if (c.delivery_mode) {
+          modes[c.wechat_id] = {
+            mode: c.delivery_mode,
+            customText: c.delivery_custom ?? "",
+          };
+        }
       });
       setCustomerNotesEdits(notesEdits);
+      setDeliveryModes((prev) => {
+        const next = { ...prev, ...modes };
+        saved.customer_summary_rows?.forEach((c) => {
+          if (!next[c.wechat_id]) {
+            next[c.wechat_id] = inferDeliveryMode(
+              notesEdits[c.wechat_id] ?? c.notes,
+              undefined
+            );
+          }
+        });
+        return next;
+      });
       skipAutosaveRef.current = true;
       setMessage("已加载历史接龙，可继续编辑");
     })();
@@ -488,10 +539,6 @@ function RecognizePageInner() {
     ]);
   };
 
-  const deleteRow = (rowId: string) => {
-    setRows((prev) => prev.filter((r) => r.row_id !== rowId));
-  };
-
   const buildCurrentOrders = (): ParsedOrder[] => {
     const map = new Map<string, EditableRow[]>();
     for (const row of effectiveRows) {
@@ -594,13 +641,15 @@ function RecognizePageInner() {
 
   const copyCustomerSummary = async () => {
     const table = [
-      ["客户", "商品汇总", "客户总金额", "备注", "状态"],
+      ["客户", "商品汇总", "客户总金额", "派送方式"],
       ...customerSummaryByNotes.map((c) => [
         c.wechat_id,
         c.items_summary,
         formatMoney(c.customer_total),
-        c.notes,
-        c.status,
+        deliveryModeLabel(
+          deliveryModes[c.wechat_id] ?? inferDeliveryMode(c.notes, customerAddresses[c.wechat_id]),
+          customerAddresses[c.wechat_id]
+        ),
       ]),
     ];
     try {
@@ -643,10 +692,15 @@ function RecognizePageInner() {
   const persistBatch = async (isAutosave: boolean) => {
     const orders = buildCurrentOrders();
     await saveDraft({ raw_text: rawText, menu_items: menuItems, orders });
-    const summaryRows = customerSummary.map((c) => ({
-      ...c,
-      notes: getCustomerNotes(c.wechat_id, c.notes),
-    }));
+    const summaryRows = customerSummary.map((c) => {
+      const dm = deliveryModes[c.wechat_id] ?? inferDeliveryMode(getCustomerNotes(c.wechat_id, c.notes), customerAddresses[c.wechat_id]);
+      return {
+        ...c,
+        notes: getCustomerNotes(c.wechat_id, c.notes),
+        delivery_mode: dm.mode,
+        delivery_custom: dm.mode === "custom" ? dm.customText : undefined,
+      };
+    });
     const groupedRows = buildGroupedExcelRows();
     const batchId = currentBatchId ?? `batch_${Date.now()}`;
     const payload = {
@@ -715,17 +769,6 @@ function RecognizePageInner() {
     }
   };
 
-  const updateCustomerFlag = (wechatId: string, key: keyof CustomerFlags, value: boolean) => {
-    setCustomerFlags((prev) => ({
-      ...prev,
-      [wechatId]: {
-        delivered: prev[wechatId]?.delivered ?? false,
-        paid: prev[wechatId]?.paid ?? false,
-        [key]: value,
-      },
-    }));
-  };
-
   const updateCustomerNotes = (wechatId: string, notes: string) => {
     setCustomerNotesEdits((prev) => ({ ...prev, [wechatId]: notes }));
     setRows((prev) =>
@@ -734,6 +777,37 @@ function RecognizePageInner() {
       )
     );
   };
+
+  const updateDeliveryMode = (wechatId: string, mode: DeliveryMode) => {
+    setDeliveryModes((prev) => ({
+      ...prev,
+      [wechatId]: { mode, customText: prev[wechatId]?.customText ?? "" },
+    }));
+  };
+
+  const updateDeliveryCustom = (wechatId: string, customText: string) => {
+    setDeliveryModes((prev) => ({
+      ...prev,
+      [wechatId]: { mode: "custom", customText },
+    }));
+  };
+
+  useEffect(() => {
+    setDeliveryModes((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const c of customerSummary) {
+        if (!next[c.wechat_id]) {
+          next[c.wechat_id] = inferDeliveryMode(
+            getCustomerNotes(c.wechat_id, c.notes),
+            customerAddresses[c.wechat_id]
+          );
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [customerSummary, customerNotesEdits, customerAddresses]);
 
   // 历史接龙打开后，编辑内容 debounce 自动保存到 Supabase/local。
   useEffect(() => {
@@ -762,6 +836,7 @@ function RecognizePageInner() {
     rows,
     customerFlags,
     customerNotesEdits,
+    deliveryModes,
     rawText,
     orderDate,
     batchName,
@@ -872,7 +947,7 @@ function RecognizePageInner() {
           <table className="w-full table-fixed border-collapse text-xs">
             <thead>
               <tr className="bg-zinc-100">
-                {["日期", "客户", "商品", "数量", "单价", "总金额", "备注", "配送", "付款", "制作状态", "操作"].map((h) => (
+                {["日期", "客户", "商品", "数量", "单价", "总金额", "备注", "制作状态", "配送状态", "付款状态"].map((h) => (
                   <th key={h} className="sticky top-0 z-10 border bg-zinc-100 px-1 py-2 text-left font-medium">
                     {h}
                   </th>
@@ -898,53 +973,15 @@ function RecognizePageInner() {
                             : "bg-white"
                   }
                 >
-                  <td className="border px-1 py-1 w-[3.5rem]">
-                    {isFirst ? (
-                      <input
-                        className="w-full rounded border p-0.5 text-xs"
-                        value={orderDate}
-                        onChange={(e) => setOrderDate(e.target.value)}
-                      />
-                    ) : null}
+                  <td className="border px-1 py-1 truncate">{isFirst ? orderDate : ""}</td>
+                  <td className="border px-1 py-1 truncate">{isFirst ? row.wechat_id : ""}</td>
+                  <td className="border px-1 py-1 truncate" title={getShortProductName(row)}>
+                    {getShortProductName(row)}
                   </td>
-                  <td className="border px-1 py-1 w-[5rem]">
-                    {isFirst ? (
-                      <input
-                        className="w-full rounded border p-0.5 text-xs"
-                        value={row.wechat_id}
-                        onChange={(e) => updateRow(row.row_id, "wechat_id", e.target.value)}
-                      />
-                    ) : null}
-                  </td>
-                  <td className="border px-1 py-1 w-[6.5rem]">
-                    <input
-                      className="w-full rounded border p-0.5 text-xs"
-                      value={row.display_name || getShortProductName(row)}
-                      onChange={(e) => updateRow(row.row_id, "display_name", e.target.value)}
-                      title={row.display_name || getShortProductName(row)}
-                    />
-                  </td>
-                  <td className="border px-1 py-1 w-[2.5rem]">
-                    <input
-                      type="number"
-                      className="w-full rounded border p-0.5 text-xs"
-                      value={row.quantity}
-                      onChange={(e) => updateRow(row.row_id, "quantity", Number(e.target.value || 0))}
-                    />
-                  </td>
-                  <td className="border px-1 py-1 w-[3rem]">
-                    <input
-                      type="number"
-                      step="0.01"
-                      className="w-full rounded border p-0.5 text-xs"
-                      value={row.unit_price}
-                      onChange={(e) => updateRow(row.row_id, "unit_price", Number(e.target.value || 0))}
-                    />
-                  </td>
-                  <td className="border px-1 py-1 w-[3.5rem]">
-                    {isFirst ? formatMoney(customerTotal) : ""}
-                  </td>
-                  <td className="border px-1 py-1 w-[4rem]">
+                  <td className="border px-1 py-1 text-center">{row.quantity}</td>
+                  <td className="border px-1 py-1 text-right">{formatPrice(row.unit_price)}</td>
+                  <td className="border px-1 py-1 text-right">{isFirst ? formatMoney(customerTotal) : ""}</td>
+                  <td className="border px-1 py-1">
                     {isFirst ? (
                       <input
                         className="w-full rounded border p-0.5 text-xs"
@@ -953,58 +990,22 @@ function RecognizePageInner() {
                       />
                     ) : null}
                   </td>
-                  <td className="border px-1 py-1 w-[4.5rem]">
-                    {isFirst ? (
-                      <select
-                        className={`w-full rounded border p-0.5 text-xs ${deliveryStatusSelectClass(
-                          customerFlags[wechatId]?.delivered ?? false
-                        )}`}
-                        value={(customerFlags[wechatId]?.delivered ?? false) ? "已送达" : "未送达"}
-                        onChange={(e) =>
-                          updateCustomerFlag(wechatId, "delivered", e.target.value === "已送达")
-                        }
-                      >
-                        <option value="未送达">未送达</option>
-                        <option value="已送达">已送达</option>
-                      </select>
-                    ) : null}
+                  <td className="border px-1 py-1 text-center text-[11px]">
+                    {row.production_status || "未制作"}
                   </td>
-                  <td className="border px-1 py-1 w-[4.5rem]">
-                    {isFirst ? (
-                      <select
-                        className={`w-full rounded border p-0.5 text-xs ${paymentStatusSelectClass(
-                          customerFlags[wechatId]?.paid ?? false
-                        )}`}
-                        value={(customerFlags[wechatId]?.paid ?? false) ? "已付款" : "未付款"}
-                        onChange={(e) =>
-                          updateCustomerFlag(wechatId, "paid", e.target.value === "已付款")
-                        }
-                      >
-                        <option value="未付款">未付款</option>
-                        <option value="已付款">已付款</option>
-                      </select>
-                    ) : null}
+                  <td className="border px-1 py-1 text-center text-[11px]">
+                    {isFirst
+                      ? (customerFlags[wechatId]?.delivered ?? false)
+                        ? "已送达"
+                        : "未送达"
+                      : ""}
                   </td>
-                  <td className="border px-1 py-1 w-[4.5rem]">
-                    <select
-                      className="w-full rounded border p-0.5 text-xs"
-                      value={row.production_status || "未制作"}
-                      onChange={(e) => updateRow(row.row_id, "production_status", e.target.value)}
-                    >
-                      <option value="未制作">未制作</option>
-                      <option value="制作中">制作中</option>
-                      <option value="已制作">已制作</option>
-                    </select>
-                  </td>
-                  <td className="border px-1 py-1 w-[2.5rem]">
-                    {!row.is_example ? (
-                      <button
-                        onClick={() => deleteRow(row.row_id)}
-                        className="rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-600 hover:bg-zinc-200"
-                      >
-                        删
-                      </button>
-                    ) : null}
+                  <td className="border px-1 py-1 text-center text-[11px]">
+                    {isFirst
+                      ? (customerFlags[wechatId]?.paid ?? false)
+                        ? "已付款"
+                        : "未付款"
+                      : ""}
                   </td>
                 </tr>
               ))}
@@ -1022,27 +1023,53 @@ function RecognizePageInner() {
           <table className="min-w-[760px] border-collapse text-sm">
             <thead>
               <tr className="bg-zinc-100">
-                {["客户", "商品汇总", "客户总金额", "备注", "状态"].map((h) => (
+                {["客户", "商品汇总", "客户总金额", "派送方式"].map((h) => (
                   <th key={h} className="border px-2 py-2 text-left">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {customerSummaryByNotes.map((row) => (
+              {customerSummaryByNotes.map((row) => {
+                const dm =
+                  deliveryModes[row.wechat_id] ??
+                  inferDeliveryMode(row.notes, customerAddresses[row.wechat_id]);
+                const defaultAddr = customerAddresses[row.wechat_id];
+                return (
                 <tr key={`cs_${row.wechat_id}`}>
                   <td className="border px-2 py-1">{row.wechat_id}</td>
                   <td className="border px-2 py-1">{row.items_summary}</td>
                   <td className="border px-2 py-1">{formatMoney(row.customer_total)}</td>
                   <td className="border px-2 py-1">
-                    <input
-                      className="w-full min-w-[6rem] rounded border p-1 text-sm"
-                      value={row.notes}
-                      onChange={(e) => updateCustomerNotes(row.wechat_id, e.target.value)}
-                    />
+                    <div className="flex flex-col gap-1">
+                      <select
+                        className="w-full rounded border p-1 text-sm"
+                        value={dm.mode}
+                        onChange={(e) =>
+                          updateDeliveryMode(row.wechat_id, e.target.value as DeliveryMode)
+                        }
+                      >
+                        <option value="default">
+                          默认地址{defaultAddr ? ` (${defaultAddr})` : ""}
+                        </option>
+                        <option value="pickup">自取</option>
+                        <option value="custom">自定义</option>
+                      </select>
+                      {dm.mode === "custom" ? (
+                        <input
+                          className="w-full rounded border p-1 text-sm"
+                          placeholder="输入自定义派送方式/地址"
+                          value={dm.customText}
+                          onChange={(e) => updateDeliveryCustom(row.wechat_id, e.target.value)}
+                        />
+                      ) : null}
+                      {dm.mode === "default" && defaultAddr ? (
+                        <span className="text-xs text-zinc-500">{defaultAddr}</span>
+                      ) : null}
+                    </div>
                   </td>
-                  <td className="border px-2 py-1">{row.status}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
