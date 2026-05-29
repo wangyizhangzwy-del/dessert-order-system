@@ -139,20 +139,27 @@ function normalizeProductionStatusByCustomer(rows: EditableRow[]): EditableRow[]
 }
 
 function statusSelectClass(
-  kind: "production" | "delivery" | "payment",
+  kind: "production" | "payment",
   value: string
 ): string {
   const base = "w-full min-w-0 rounded border px-1 py-1 text-xs text-center";
   if (kind === "production" && value === "已制作") {
     return `${base} border-red-200 bg-red-50 text-red-700`;
   }
-  if (kind === "delivery" && value === "已送达") {
-    return `${base} border-blue-200 bg-blue-50 text-blue-700`;
-  }
   if (kind === "payment" && value === "已付款") {
     return `${base} border-green-200 bg-green-50 text-green-700`;
   }
   return `${base} border-zinc-200 bg-white text-zinc-700`;
+}
+
+function needsDeliveryFromMode(mode: DeliveryMode): boolean {
+  return mode !== "pickup";
+}
+
+function needsDeliverySelectClass(needs: boolean): string {
+  const base = "h-6 w-full rounded border px-0.5 text-xs text-center leading-none";
+  if (needs) return `${base} border-red-300 bg-red-100 font-medium text-red-800`;
+  return `${base} border-zinc-200 bg-white text-zinc-600`;
 }
 
 function toRows(orders: ParsedOrder[]): EditableRow[] {
@@ -264,6 +271,8 @@ function RecognizePageInner() {
   const [customerAddresses, setCustomerAddresses] = useState<Record<string, string>>({});
   const [deliveryModes, setDeliveryModes] = useState<Record<string, DeliveryModeState>>({});
   const [deliveryModeManual, setDeliveryModeManual] = useState<Record<string, boolean>>({});
+  const [customerNeedsDelivery, setCustomerNeedsDelivery] = useState<Record<string, boolean>>({});
+  const [customerNeedsDeliveryManual, setCustomerNeedsDeliveryManual] = useState<Record<string, boolean>>({});
   const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [autosaveError, setAutosaveError] = useState("");
   const skipAutosaveRef = useRef(true);
@@ -312,6 +321,8 @@ function RecognizePageInner() {
       const notesEdits: Record<string, string> = {};
       const modes: Record<string, DeliveryModeState> = {};
       const manual: Record<string, boolean> = {};
+      const needsDelivery: Record<string, boolean> = {};
+      const needsDeliveryManual: Record<string, boolean> = {};
       saved.customer_summary_rows?.forEach((c) => {
         if (c.notes) notesEdits[c.wechat_id] = c.notes;
         if (c.delivery_mode) {
@@ -321,10 +332,16 @@ function RecognizePageInner() {
           };
           manual[c.wechat_id] = true;
         }
+        if (typeof c.needs_delivery === "boolean") {
+          needsDelivery[c.wechat_id] = c.needs_delivery;
+          needsDeliveryManual[c.wechat_id] = true;
+        }
       });
       setCustomerNotesEdits(notesEdits);
       setDeliveryModes(modes);
       setDeliveryModeManual(manual);
+      setCustomerNeedsDelivery(needsDelivery);
+      setCustomerNeedsDeliveryManual(needsDeliveryManual);
       skipAutosaveRef.current = true;
       setMessage("已加载历史接龙，可继续编辑");
     })();
@@ -354,6 +371,8 @@ function RecognizePageInner() {
       setCustomerNotesEdits({});
       setDeliveryModes({});
       setDeliveryModeManual({});
+      setCustomerNeedsDelivery({});
+      setCustomerNeedsDeliveryManual({});
       setMessage(`识别完成：${parsed.orders.length} 行，warning ${parsed.warning_count}，failed ${parsed.failed_count}`);
     } catch {
       setRows([]);
@@ -435,6 +454,17 @@ function RecognizePageInner() {
   const getDeliveryModeForCustomer = (wechatId: string, notes: string): DeliveryModeState =>
     deliveryModes[wechatId] ??
     resolveDeliveryMode(notes, customerAddresses[wechatId]);
+
+  const getNeedsDeliveryForCustomer = (wechatId: string, notes: string): boolean => {
+    if (customerNeedsDeliveryManual[wechatId]) {
+      return customerNeedsDelivery[wechatId] ?? true;
+    }
+    if (customerNeedsDelivery[wechatId] !== undefined) {
+      return customerNeedsDelivery[wechatId];
+    }
+    const dm = getDeliveryModeForCustomer(wechatId, notes);
+    return needsDeliveryFromMode(dm.mode);
+  };
 
   const refreshCustomerAddresses = async () => {
     const customers = await getCustomers();
@@ -637,7 +667,7 @@ function RecognizePageInner() {
 
   const toGroupedExcelTSV = (): string => {
     const table = [
-      ["日期", "客户", "商品", "数量", "单价(美金)", "总金额(美金)", "备注", "制作状态", "配送状态", "付款状态"],
+      ["日期", "客户", "商品", "数量", "单价(美金)", "总金额(美金)", "备注", "制作状态", "付款状态"],
       ...buildGroupedExcelRows().map((r) => [
         r.date,
         r.customer,
@@ -647,7 +677,6 @@ function RecognizePageInner() {
         r.customer_total,
         r.notes,
         r.production_status,
-        r.delivery_status,
         r.payment_status,
       ]),
     ];
@@ -656,11 +685,12 @@ function RecognizePageInner() {
 
   const copyCustomerSummary = async () => {
     const table = [
-      ["客户", "商品汇总", "客户总金额(美金)", "派送方式"],
+      ["客户", "商品汇总", "客户总金额(美金)", "配送", "派送"],
       ...customerSummaryByNotes.map((c) => [
         c.wechat_id,
         c.items_summary,
         formatMoney(c.customer_total),
+        getNeedsDeliveryForCustomer(c.wechat_id, c.notes) ? "是" : "否",
         deliveryModeLabel(
           getDeliveryModeForCustomer(c.wechat_id, c.notes),
           customerAddresses[c.wechat_id]
@@ -724,6 +754,10 @@ function RecognizePageInner() {
         notes: getCustomerNotes(c.wechat_id, c.notes),
         delivery_mode: dm.mode,
         delivery_custom: dm.mode === "custom" ? dm.customText : undefined,
+        needs_delivery: getNeedsDeliveryForCustomer(
+          c.wechat_id,
+          getCustomerNotes(c.wechat_id, c.notes)
+        ),
       };
     });
     const groupedRows = buildGroupedExcelRows();
@@ -814,18 +848,16 @@ function RecognizePageInner() {
     );
   };
 
-  const updateDeliveryStatus = (wechatId: string, delivered: boolean) => {
-    setCustomerFlags((prev) => ({
-      ...prev,
-      [wechatId]: { ...(prev[wechatId] ?? { delivered: false, paid: false }), delivered },
-    }));
-  };
-
   const updatePaymentStatus = (wechatId: string, paid: boolean) => {
     setCustomerFlags((prev) => ({
       ...prev,
       [wechatId]: { ...(prev[wechatId] ?? { delivered: false, paid: false }), paid },
     }));
+  };
+
+  const updateNeedsDelivery = (wechatId: string, needs: boolean) => {
+    setCustomerNeedsDeliveryManual((prev) => ({ ...prev, [wechatId]: true }));
+    setCustomerNeedsDelivery((prev) => ({ ...prev, [wechatId]: needs }));
   };
 
   const updateDeliveryMode = (wechatId: string, mode: DeliveryMode) => {
@@ -845,6 +877,8 @@ function RecognizePageInner() {
             }
           : { mode, customText: "" },
     }));
+    setCustomerNeedsDelivery((prev) => ({ ...prev, [wechatId]: needsDeliveryFromMode(mode) }));
+    setCustomerNeedsDeliveryManual((prev) => ({ ...prev, [wechatId]: false }));
   };
 
   const updateDeliveryCustom = (wechatId: string, customText: string) => {
@@ -875,6 +909,35 @@ function RecognizePageInner() {
     });
   }, [customerSummary, customerNotesEdits, customerAddresses, deliveryModeManual]);
 
+  useEffect(() => {
+    setCustomerNeedsDelivery((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const c of customerSummary) {
+        if (customerNeedsDeliveryManual[c.wechat_id]) continue;
+        const mode =
+          deliveryModes[c.wechat_id]?.mode ??
+          resolveDeliveryMode(
+            getCustomerNotes(c.wechat_id, c.notes),
+            customerAddresses[c.wechat_id]
+          ).mode;
+        const resolved = needsDeliveryFromMode(mode);
+        if (next[c.wechat_id] !== resolved) {
+          next[c.wechat_id] = resolved;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [
+    customerSummary,
+    customerNotesEdits,
+    customerAddresses,
+    deliveryModes,
+    deliveryModeManual,
+    customerNeedsDeliveryManual,
+  ]);
+
   // 历史接龙打开后，编辑内容 debounce 自动保存到 Supabase/local。
   useEffect(() => {
     if (!isExistingBatch || rows.length === 0) return;
@@ -902,7 +965,10 @@ function RecognizePageInner() {
     rows,
     customerFlags,
     customerNotesEdits,
+    customerNeedsDelivery,
+    customerNeedsDeliveryManual,
     deliveryModes,
+    deliveryModeManual,
     rawText,
     orderDate,
     batchName,
@@ -994,21 +1060,20 @@ function RecognizePageInner() {
           </button>
         </div>
         <div className="mt-3 overflow-x-auto rounded border lg:overflow-x-visible">
-          <table className="w-full min-w-[720px] table-fixed border-collapse text-sm lg:min-w-0">
+          <table className="w-full min-w-[640px] table-fixed border-collapse text-sm lg:min-w-0">
             <colgroup>
-              <col className="w-[11%]" />
-              <col className="w-[30%]" />
-              <col className="w-[5%]" />
-              <col className="w-[7%]" />
-              <col className="w-[8%]" />
               <col className="w-[12%]" />
+              <col className="w-[34%]" />
+              <col className="w-[5%]" />
+              <col className="w-[8%]" />
               <col className="w-[9%]" />
+              <col className="w-[14%]" />
               <col className="w-[9%]" />
               <col className="w-[9%]" />
             </colgroup>
             <thead>
               <tr className="bg-zinc-100">
-                {["客户", "商品", "数量", "单价(美金)", "总金额(美金)", "备注", "制作状态", "配送状态", "付款状态"].map((h) => (
+                {["客户", "商品", "数量", "单价(美金)", "总金额(美金)", "备注", "制作状态", "付款状态"].map((h) => (
                   <th key={h} className="border bg-zinc-100 px-1.5 py-2 text-left text-xs font-medium leading-tight lg:px-2 lg:text-sm">
                     {h}
                   </th>
@@ -1076,23 +1141,6 @@ function RecognizePageInner() {
                     <td rowSpan={rowSpan} className="border px-1 py-1.5 text-center align-top lg:px-2 lg:py-2">
                       <select
                         className={statusSelectClass(
-                          "delivery",
-                          customerFlags[wechatId]?.delivered ? "已送达" : "未送达"
-                        )}
-                        value={customerFlags[wechatId]?.delivered ? "已送达" : "未送达"}
-                        onChange={(e) =>
-                          updateDeliveryStatus(wechatId, e.target.value === "已送达")
-                        }
-                      >
-                        <option value="未送达">未送达</option>
-                        <option value="已送达">已送达</option>
-                      </select>
-                    </td>
-                  ) : null}
-                  {isFirst ? (
-                    <td rowSpan={rowSpan} className="border px-1 py-1.5 text-center align-top lg:px-2 lg:py-2">
-                      <select
-                        className={statusSelectClass(
                           "payment",
                           customerFlags[wechatId]?.paid ? "已付款" : "未付款"
                         )}
@@ -1116,12 +1164,21 @@ function RecognizePageInner() {
           <h2 className="text-lg font-semibold">客户汇总预览</h2>
           <button onClick={copyCustomerSummary} className="rounded bg-zinc-900 px-3 py-2 text-sm text-white">复制客户汇总到 Excel</button>
         </div>
-        <div className="mt-3 overflow-x-auto">
-          <table className="min-w-[760px] border-collapse text-sm">
+        <div className="mt-3 overflow-x-auto lg:overflow-x-visible">
+          <table className="w-full table-fixed border-collapse text-xs lg:min-w-0 lg:text-sm">
+            <colgroup>
+              <col className="w-[13%]" />
+              <col className="w-[36%]" />
+              <col className="w-[10%]" />
+              <col className="w-[7%]" />
+              <col className="w-[34%]" />
+            </colgroup>
             <thead>
               <tr className="bg-zinc-100">
-                {["客户", "商品汇总", "客户总金额(美金)", "派送方式"].map((h) => (
-                  <th key={h} className="border px-2 py-2 text-left">{h}</th>
+                {["客户", "商品汇总", "金额", "配送", "派送"].map((h) => (
+                  <th key={h} className="border px-1 py-1.5 text-left text-xs font-medium lg:px-1.5">
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -1129,23 +1186,41 @@ function RecognizePageInner() {
               {customerSummaryByNotes.map((row) => {
                 const dm = getDeliveryModeForCustomer(row.wechat_id, row.notes);
                 const defaultAddr = customerAddresses[row.wechat_id];
+                const needsDelivery = getNeedsDeliveryForCustomer(row.wechat_id, row.notes);
                 return (
-                <tr key={`cs_${row.wechat_id}`}>
-                  <td className="border px-2 py-1">{row.wechat_id}</td>
-                  <td className="border px-2 py-1">{row.items_summary}</td>
-                  <td className="border px-2 py-1">{formatMoney(row.customer_total)}</td>
-                  <td className="border px-2 py-1 align-top">
+                <tr key={`cs_${row.wechat_id}`} className="align-middle">
+                  <td className="border px-1 py-1 truncate lg:px-1.5">{row.wechat_id}</td>
+                  <td className="border px-1 py-1 leading-snug lg:px-1.5">
+                    <span className="line-clamp-2 break-words">{row.items_summary}</span>
+                  </td>
+                  <td className="border px-1 py-1 whitespace-nowrap lg:px-1.5">
+                    {formatMoney(row.customer_total)}
+                  </td>
+                  <td className="border px-1 py-1 lg:px-1.5">
+                    <select
+                      className={needsDeliverySelectClass(needsDelivery)}
+                      value={needsDelivery ? "是" : "否"}
+                      onChange={(e) =>
+                        updateNeedsDelivery(row.wechat_id, e.target.value === "是")
+                      }
+                    >
+                      <option value="是">是</option>
+                      <option value="否">否</option>
+                    </select>
+                  </td>
+                  <td className="border px-1 py-1 lg:px-1.5">
                     {dm.mode === "custom" ? (
-                      <div className="flex min-w-0 max-w-[220px] items-center gap-1">
+                      <div className="flex min-w-0 items-center gap-0.5">
                         <input
-                          className="h-7 min-w-0 flex-1 rounded border px-1.5 text-sm leading-tight"
+                          className="h-6 min-w-0 flex-1 truncate rounded border px-1 text-xs leading-tight"
                           placeholder="地址"
+                          title={dm.customText}
                           value={dm.customText}
                           onChange={(e) => updateDeliveryCustom(row.wechat_id, e.target.value)}
                         />
                         <select
-                          aria-label="切换派送方式"
-                          className="h-7 w-9 shrink-0 rounded border px-0.5 text-xs text-zinc-600"
+                          aria-label="切换派送"
+                          className="h-6 w-7 shrink-0 rounded border px-0 text-[10px] text-zinc-600"
                           defaultValue=""
                           onChange={(e) => {
                             const next = e.target.value as DeliveryMode;
@@ -1156,21 +1231,26 @@ function RecognizePageInner() {
                           }}
                         >
                           <option value="">⇄</option>
-                          <option value="default">{defaultAddr?.trim() || "默认地址"}</option>
+                          <option value="default">{defaultAddr?.trim() || "默认"}</option>
                           <option value="pickup">自取</option>
                         </select>
                       </div>
                     ) : (
                       <select
-                        className="h-7 w-full max-w-[220px] rounded border px-1.5 text-sm"
+                        className="h-6 w-full truncate rounded border px-1 text-xs"
                         value={dm.mode}
+                        title={
+                          dm.mode === "default"
+                            ? defaultAddr?.trim() || "默认地址"
+                            : "自取"
+                        }
                         onChange={(e) =>
                           updateDeliveryMode(row.wechat_id, e.target.value as DeliveryMode)
                         }
                       >
                         <option value="default">{defaultAddr?.trim() || "默认地址"}</option>
                         <option value="pickup">自取</option>
-                        <option value="custom">输入地址…</option>
+                        <option value="custom">…</option>
                       </select>
                     )}
                   </td>

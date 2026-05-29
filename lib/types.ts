@@ -128,6 +128,7 @@ export interface SavedJielong {
     status: ParseStatus;
     delivery_mode?: "default" | "pickup" | "custom";
     delivery_custom?: string;
+    needs_delivery?: boolean;
   }[];
   production_summary_rows: {
     key: string;
