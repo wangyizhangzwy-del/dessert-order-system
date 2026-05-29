@@ -86,7 +86,7 @@ export function BarChart({
   if (safeLabels.length === 0) {
     return <div className="py-8 text-center text-sm text-zinc-500">暂无图表数据</div>;
   }
-  const width = chartWidth(safeLabels.length);
+  const width = Math.max(chartWidth(safeLabels.length), 1);
   const leftPad = 36;
   const max = axisMax(safeSeries.flatMap((s) => s.values ?? []));
   const groupW = SLOT_W * 0.6;
@@ -151,15 +151,20 @@ export function LineChart({
   formatValue?: (n: number) => string;
   yAxisLabel?: string;
 }) {
-  const width = chartWidth(labels.length);
-  const max = axisMax(values);
-  const { rotate, height, plotH } = xAxisLayout(labels);
+  const safeLabels = Array.isArray(labels) ? labels : [];
+  const safeValues = Array.isArray(values) ? values : [];
+  if (safeLabels.length === 0) {
+    return <div className="py-8 text-center text-sm text-zinc-500">暂无图表数据</div>;
+  }
+  const width = Math.max(chartWidth(safeLabels.length), 1);
+  const max = axisMax(safeValues);
+  const { rotate, height, plotH } = xAxisLayout(safeLabels);
   const baseline = PAD_TOP + plotH;
   const leftPad = 36;
   const labelY = height - (rotate ? 6 : 11);
   const pointX = (i: number) => leftPad + i * SLOT_W + SLOT_W / 2;
   const pointY = (v: number) => baseline - (v / max) * plotH;
-  const path = values.map((v, i) => `${i === 0 ? "M" : "L"} ${pointX(i)} ${pointY(v)}`).join(" ");
+  const path = safeValues.map((v, i) => `${i === 0 ? "M" : "L"} ${pointX(i)} ${pointY(v)}`).join(" ");
 
   return (
     <div className="overflow-x-auto pb-1">
@@ -169,14 +174,14 @@ export function LineChart({
         <text x={8} y={PAD_TOP + 8} fontSize="10" fill="#71717a" transform={`rotate(-90 8 ${PAD_TOP + 8})`}>
           {yAxisLabel}
         </text>
-        {values.length > 1 ? <path d={path} fill="none" stroke={color} strokeWidth={2} /> : null}
-        {values.map((v, i) => (
-          <Fragment key={`${labels[i]}-${i}`}>
+        {safeValues.length > 1 ? <path d={path} fill="none" stroke={color} strokeWidth={2} /> : null}
+        {safeValues.map((v, i) => (
+          <Fragment key={`${safeLabels[i]}-${i}`}>
             <circle cx={pointX(i)} cy={pointY(v)} r={3.5} fill={color} />
             <text x={pointX(i)} y={pointY(v) - 9} textAnchor="middle" fontSize="11" fontWeight="600" fill="#3f3f46">
               {formatValue(v)}
             </text>
-            <XAxisLabel label={labels[i]} x={pointX(i)} y={labelY} rotate={rotate} />
+            <XAxisLabel label={safeLabels[i]} x={pointX(i)} y={labelY} rotate={rotate} />
           </Fragment>
         ))}
       </svg>
@@ -213,14 +218,19 @@ export function DonutChart({
   formatValue?: (n: number) => string;
   size?: number;
 }) {
-  const total = slices.reduce((s, x) => s + x.value, 0);
-  const cx = size / 2;
-  const cy = size / 2;
-  const r = size * 0.36;
+  const safeSlices = Array.isArray(slices) ? slices : [];
+  const chartSize = Math.max(size, 1);
+  if (safeSlices.length === 0) {
+    return <div className="py-8 text-center text-sm text-zinc-500">暂无图表数据</div>;
+  }
+  const total = safeSlices.reduce((s, x) => s + x.value, 0);
+  const cx = chartSize / 2;
+  const cy = chartSize / 2;
+  const r = chartSize * 0.36;
   const ir = r * 0.55;
   let angle = -Math.PI / 2;
 
-  const arcs = slices.map((slice) => {
+  const arcs = safeSlices.map((slice) => {
     const frac = total > 0 ? slice.value / total : 0;
     const sweep = frac * Math.PI * 2;
     const x1 = cx + r * Math.cos(angle);
@@ -239,7 +249,7 @@ export function DonutChart({
 
   return (
     <div className="flex flex-wrap items-center gap-6">
-      <svg width={size} height={size} role="img">
+      <svg width={chartSize} height={chartSize} role="img">
         {arcs.map((a) => (
           <path key={a.label} d={a.d} fill={a.color} stroke="#fff" strokeWidth={1} />
         ))}

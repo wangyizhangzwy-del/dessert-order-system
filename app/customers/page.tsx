@@ -6,6 +6,8 @@ import { Customer } from "@/lib/types";
 import { getCustomers, rebuildCustomerProfiles } from "@/lib/storage";
 import { parseOrderDate } from "@/lib/sort";
 import { deriveAddressFromHistory } from "@/lib/address";
+import { safeLocaleCompare } from "@/lib/safeLocale";
+import { LoadingPanel } from "@/app/components/LoadingPanel";
 
 function customerAddress(c: Customer): string {
   return c.default_address || deriveAddressFromHistory(c.order_history) || "-";
@@ -24,24 +26,33 @@ function lastOrderTimestamp(c: Customer): number {
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [query, setQuery] = useState("");
   const rebuiltRef = useRef(false);
 
   const loadCustomers = useCallback(async () => {
-    let data = await getCustomers();
-    const needsRebuild = data.some(
-      (c) => !c.default_address && deriveAddressFromHistory(c.order_history)
-    );
-    if (needsRebuild && !rebuiltRef.current) {
-      rebuiltRef.current = true;
-      try {
-        await rebuildCustomerProfiles();
-        data = await getCustomers();
-      } catch {
-        // 回填失败不阻塞展示
+    try {
+      setLoadError("");
+      let data = await getCustomers();
+      const needsRebuild = data.some(
+        (c) => !c.default_address && deriveAddressFromHistory(c.order_history)
+      );
+      if (needsRebuild && !rebuiltRef.current) {
+        rebuiltRef.current = true;
+        try {
+          await rebuildCustomerProfiles();
+          data = await getCustomers();
+        } catch {
+          // 回填失败不阻塞展示
+        }
       }
+      setCustomers(data);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "加载失败，请刷新页面重试。");
+    } finally {
+      setLoading(false);
     }
-    setCustomers(data);
   }, []);
 
   useEffect(() => {
@@ -68,7 +79,7 @@ export default function CustomersPage() {
           if (countDiff !== 0) return countDiff;
           const dateDiff = lastOrderTimestamp(b) - lastOrderTimestamp(a);
           if (dateDiff !== 0) return dateDiff;
-          return a.wechat_id.localeCompare(b.wechat_id, "zh-Hans-CN");
+          return safeLocaleCompare(a.wechat_id, b.wechat_id);
         }),
     [customers, query]
   );
@@ -87,6 +98,14 @@ export default function CustomersPage() {
         </div>
       </div>
 
+      {loading ? (
+        <LoadingPanel />
+      ) : loadError ? (
+        <div className="rounded-xl bg-white p-4 text-sm text-red-700 shadow-sm">{loadError}</div>
+      ) : null}
+
+      {!loading && !loadError ? (
+      <>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded bg-white p-3 text-sm shadow-sm">客户总数：{totalCount}</div>
         {query ? (
@@ -113,6 +132,8 @@ export default function CustomersPage() {
           </div>
         </div>
       ))}
+      </>
+      ) : null}
     </div>
   );
 }

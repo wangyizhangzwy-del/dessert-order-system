@@ -12,6 +12,7 @@ import { productMatchesQuery } from "@/lib/productNormalize";
 import { formatDateWithWeekday } from "@/lib/dateFormat";
 import { formatMoney, formatPrice } from "@/lib/moneyFormat";
 import { BarChart, DonutChart } from "@/app/components/Charts";
+import { LoadingPanel } from "@/app/components/LoadingPanel";
 
 type ViewMode = "detail" | "chart";
 
@@ -66,6 +67,7 @@ export default function AnalyticsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("detail");
   const [rows, setRows] = useState<ProductAnalyticsRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const topScrollRef = useRef<HTMLDivElement>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const syncingRef = useRef(false);
@@ -74,9 +76,14 @@ export default function AnalyticsPage() {
     let active = true;
     (async () => {
       try {
+        setLoadError("");
         const saved = await getSavedJielongs();
         if (!active) return;
         setRows(buildProductAnalytics(saved));
+      } catch (e) {
+        if (active) {
+          setLoadError(e instanceof Error ? e.message : "加载失败，请刷新页面重试。");
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -101,14 +108,17 @@ export default function AnalyticsPage() {
     () => [...filtered].sort((a, b) => b.total_revenue - a.total_revenue)[0],
     [filtered]
   );
-  const chartTop = useMemo(() => filtered.slice(0, 10), [filtered]);
+  const chartTop = useMemo(
+    () => (viewMode === "chart" ? filtered.slice(0, 10) : []),
+    [filtered, viewMode]
+  );
   const revenueShare = useMemo(
-    () => buildProductShareSlices(filtered, "revenue", 10),
-    [filtered]
+    () => (viewMode === "chart" ? buildProductShareSlices(filtered, "revenue", 10) : []),
+    [filtered, viewMode]
   );
   const qtyShare = useMemo(
-    () => buildProductShareSlices(filtered, "quantity", 10),
-    [filtered]
+    () => (viewMode === "chart" ? buildProductShareSlices(filtered, "quantity", 10) : []),
+    [filtered, viewMode]
   );
 
   const syncScroll = (source: "top" | "bottom") => {
@@ -124,9 +134,13 @@ export default function AnalyticsPage() {
   };
 
   if (loading) {
+    return <LoadingPanel />;
+  }
+
+  if (loadError) {
     return (
       <div className="rounded-xl bg-white p-4 shadow-sm">
-        <p className="text-sm text-zinc-500">正在加载...</p>
+        <p className="text-sm text-red-700">{loadError}</p>
       </div>
     );
   }
@@ -216,7 +230,7 @@ export default function AnalyticsPage() {
                   {TABLE_HEADERS.map((h, i) => (
                     <th
                       key={h}
-                      className={`border px-2 py-2 text-left ${i === 0 ? "sticky left-0 z-20 min-w-[120px] bg-zinc-100 shadow-[2px_0_4px_rgba(0,0,0,0.06)]" : ""}`}
+                      className={`border px-2 py-2 text-left ${i === 0 ? "min-w-[120px] bg-zinc-100 md:sticky md:left-0 md:z-20 md:shadow-[2px_0_4px_rgba(0,0,0,0.06)]" : ""}`}
                     >
                       {h}
                     </th>
@@ -226,7 +240,7 @@ export default function AnalyticsPage() {
               <tbody>
                 {filtered.map((r) => (
                   <tr key={r.key} className="group">
-                    <td className="sticky left-0 z-10 min-w-[120px] border bg-white px-2 py-1 font-medium shadow-[2px_0_4px_rgba(0,0,0,0.06)] group-hover:bg-zinc-50">
+                    <td className="min-w-[120px] border bg-white px-2 py-1 font-medium md:sticky md:left-0 md:z-10 md:shadow-[2px_0_4px_rgba(0,0,0,0.06)] group-hover:bg-zinc-50">
                       {r.normalized_name}
                     </td>
                     <td className="border px-2 py-1">

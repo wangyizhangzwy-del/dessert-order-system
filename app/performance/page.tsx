@@ -12,6 +12,7 @@ import { parseOrderDate } from "@/lib/sort";
 import { formatDateRangeMd, formatChartDateLabel, formatDateWithWeekday } from "@/lib/dateFormat";
 import { formatMoney } from "@/lib/moneyFormat";
 import { BarChart, LineChart } from "@/app/components/Charts";
+import { LoadingPanel } from "@/app/components/LoadingPanel";
 
 function batchMonth(orderDate?: string): number | null {
   const ts = parseOrderDate(orderDate);
@@ -23,13 +24,19 @@ export default function PerformancePage() {
   const [savedBatches, setSavedBatches] = useState<SavedJielong[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
+        setLoadError("");
         const saved = await getSavedJielongs();
         if (active) setSavedBatches(saved);
+      } catch (e) {
+        if (active) {
+          setLoadError(e instanceof Error ? e.message : "加载失败，请刷新页面重试。");
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -63,10 +70,22 @@ export default function PerformancePage() {
     [filteredBatches, data]
   );
 
-  if (loading || !data) {
+  if (loading) {
+    return <LoadingPanel />;
+  }
+
+  if (loadError) {
     return (
       <div className="rounded-xl bg-white p-4 shadow-sm">
-        <p className="text-sm text-zinc-500">正在加载...</p>
+        <p className="text-sm text-red-700">{loadError}</p>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="rounded-xl bg-white p-4 shadow-sm">
+        <p className="text-sm text-zinc-500">暂无数据</p>
       </div>
     );
   }

@@ -5,6 +5,7 @@ import {
   DraftPayload,
   SavedJielong,
 } from "@/lib/types";
+import { fetchWithTimeout } from "@/lib/fetchWithTimeout";
 
 function headers(): Record<string, string> {
   const base: Record<string, string> = { "content-type": "application/json" };
@@ -14,7 +15,10 @@ function headers(): Record<string, string> {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { ...init, headers: { ...headers(), ...(init?.headers ?? {}) } });
+  const res = await fetchWithTimeout(path, {
+    ...init,
+    headers: { ...headers(), ...(init?.headers ?? {}) },
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`请求失败 ${res.status} ${path}: ${text}`);
@@ -23,8 +27,8 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function getSavedJielongs(): Promise<SavedJielong[]> {
-  const { batches } = await api<{ batches: SavedJielong[] }>("/api/batches");
-  return batches;
+  const { batches } = await api<{ batches?: SavedJielong[] }>("/api/batches");
+  return Array.isArray(batches) ? batches : [];
 }
 
 export async function getSavedJielongById(batchId: string): Promise<SavedJielong | undefined> {
@@ -45,8 +49,8 @@ export async function deleteJielong(batchId: string): Promise<void> {
 }
 
 export async function getCustomers(): Promise<Customer[]> {
-  const { customers } = await api<{ customers: Customer[] }>("/api/customers");
-  return customers;
+  const { customers } = await api<{ customers?: Customer[] }>("/api/customers");
+  return Array.isArray(customers) ? customers : [];
 }
 
 export async function rebuildCustomerProfiles(): Promise<{ updated: number }> {

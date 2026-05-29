@@ -39,6 +39,9 @@ import {
   type SafeEditableRow,
 } from "@/lib/recognizeSafe";
 import { ErrorBoundary } from "@/app/components/ErrorBoundary";
+import { LoadingPanel } from "@/app/components/LoadingPanel";
+import { useDeferredRender } from "@/app/hooks/useDeferredRender";
+import { safeLocaleCompare } from "@/lib/safeLocale";
 import { useRouter, useSearchParams } from "next/navigation";
 
 type RowStatus = "success" | "warning" | "failed";
@@ -215,11 +218,11 @@ function copyText(text: string): Promise<void> {
   return ok ? Promise.resolve() : Promise.reject(new Error("copy failed"));
 }
 
-function RecognizeLoading() {
+function RecognizeLoading({ message = "正在加载..." }: { message?: string }) {
   return (
     <main className="mx-auto max-w-6xl p-4">
       <div className="rounded-2xl border bg-white p-6 shadow-sm">
-        <p className="text-sm text-zinc-500">正在加载...</p>
+        <LoadingPanel message={message} />
       </div>
     </main>
   );
@@ -251,7 +254,8 @@ function RecognizePageInner() {
   const [warningJumpIdx, setWarningJumpIdx] = useState(0);
   const [failedJumpIdx, setFailedJumpIdx] = useState(0);
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
-  const [mounted, setMounted] = useState(false);
+  const [batchLoading, setBatchLoading] = useState(Boolean(editingBatchId));
+  const tablesReady = useDeferredRender(editingBatchId ? 150 : 50);
   const [customerNotesEdits, setCustomerNotesEdits] = useState<Record<string, string>>({});
   const [customerAddresses, setCustomerAddresses] = useState<Record<string, string>>({});
   const [deliveryModes, setDeliveryModes] = useState<Record<string, DeliveryModeState>>({});
@@ -265,7 +269,6 @@ function RecognizePageInner() {
   const isExistingBatch = Boolean(editingBatchId && currentBatchId);
 
   useEffect(() => {
-    setMounted(true);
     (async () => {
       try {
         const customers = await getCustomers();
@@ -281,8 +284,12 @@ function RecognizePageInner() {
   }, []);
 
   useEffect(() => {
-    if (!editingBatchId) return;
+    if (!editingBatchId) {
+      setBatchLoading(false);
+      return;
+    }
     let active = true;
+    setBatchLoading(true);
     (async () => {
       try {
         const saved = await getSavedJielongById(editingBatchId);
@@ -343,6 +350,8 @@ function RecognizePageInner() {
         const detail = e instanceof Error ? e.message : String(e);
         console.error("[recognize] load batch failed", e);
         setMessage(`加载历史接龙失败：${detail}`);
+      } finally {
+        if (active) setBatchLoading(false);
       }
     })();
     return () => {
@@ -438,7 +447,7 @@ function RecognizePageInner() {
         .map((row, idx) => ({ row, idx, key: deliveryNoteKey(row.notes) }))
         .sort((a, b) => {
           if (a.key.category !== b.key.category) return a.key.category - b.key.category;
-          if (a.key.group !== b.key.group) return a.key.group.localeCompare(b.key.group, "zh-Hans-CN");
+          if (a.key.group !== b.key.group) return safeLocaleCompare(a.key.group, b.key.group);
           return a.idx - b.idx;
         })
         .map((x) => ({
@@ -1005,10 +1014,6 @@ function RecognizePageInner() {
     }
   };
 
-  if (!mounted) {
-    return <RecognizeLoading />;
-  }
-
   return (
     <div className="space-y-4" onClickCapture={onAnyButtonClick}>
       <div className="rounded-xl bg-white p-4 shadow-sm">
@@ -1024,8 +1029,11 @@ function RecognizePageInner() {
           </button>
         </div>
         {message ? <p className="mt-2 text-sm text-zinc-700">{message}</p> : null}
+        {batchLoading ? <LoadingPanel message="正在加载历史接龙..." /> : null}
       </div>
 
+      {batchLoading ? null : tablesReady ? (
+      <>
       <div className="rounded-xl bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <input
@@ -1366,6 +1374,10 @@ function RecognizePageInner() {
           </button>
         )}
       </div>
+      </>
+      ) : (
+        <LoadingPanel message="正在准备表格..." />
+      )}
     </div>
   );
 }

@@ -7,12 +7,15 @@ import { Customer } from "@/lib/types";
 import { getCustomers, updateCustomerAddress } from "@/lib/storage";
 import { sortByRecentDate } from "@/lib/sort";
 import { formatDateWithWeekday } from "@/lib/dateFormat";
+import { formatMoney, formatPrice } from "@/lib/moneyFormat";
+import { LoadingPanel } from "@/app/components/LoadingPanel";
 
 export default function CustomerDetailPage() {
   const params = useParams<{ wechat_id: string }>();
   const wechatId = decodeURIComponent(params.wechat_id);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [addressDraft, setAddressDraft] = useState("");
   const [addressSaving, setAddressSaving] = useState(false);
   const [addressMessage, setAddressMessage] = useState("");
@@ -21,8 +24,13 @@ export default function CustomerDetailPage() {
     let active = true;
     (async () => {
       try {
+        setLoadError("");
         const data = await getCustomers();
         if (active) setCustomers(data);
+      } catch (e) {
+        if (active) {
+          setLoadError(e instanceof Error ? e.message : "加载失败，请刷新页面重试。");
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -60,11 +68,16 @@ export default function CustomerDetailPage() {
     }
   };
 
-  if (loading) return <div className="rounded-xl bg-white p-4 text-sm text-zinc-500 shadow-sm">正在加载...</div>;
+  if (loading) return <LoadingPanel />;
+  if (loadError) {
+    return (
+      <div className="rounded-xl bg-white p-4 text-sm text-red-700 shadow-sm">{loadError}</div>
+    );
+  }
   if (!customer) return <div className="rounded-xl bg-white p-4 shadow-sm">客户不存在</div>;
 
   const copyHistory = async () => {
-    const rows = [["日期", "接龙名称", "商品名称", "SKU", "口味", "flavor_combo", "数量", "单价", "小计", "本单总金额", "notes"]];
+    const rows = [["日期", "接龙名称", "商品名称", "SKU", "口味", "flavor_combo", "数量", "单价(美金)", "小计(美金)", "本单总金额(美金)", "notes"]];
     sortedHistory.forEach((h) => {
       h.items.forEach((it, idx) => {
         rows.push([
@@ -75,9 +88,9 @@ export default function CustomerDetailPage() {
           it.variant ?? "",
           it.flavor_combo ?? "",
           String(it.quantity),
-          String(it.unit_price),
-          String(it.line_total),
-          idx === 0 ? String(h.customer_total) : "",
+          formatPrice(it.unit_price),
+          formatMoney(it.line_total),
+          idx === 0 ? formatMoney(h.customer_total) : "",
           idx === 0 ? h.notes : "",
         ]);
       });
@@ -122,7 +135,7 @@ export default function CustomerDetailPage() {
           <table className="min-w-[1100px] border-collapse text-sm">
             <thead>
               <tr className="bg-zinc-100">
-                {["日期", "接龙名称", "商品名称", "SKU", "口味", "flavor_combo", "数量", "单价", "小计", "本单总金额", "notes"].map((h) => (
+                {["日期", "接龙名称", "商品名称", "SKU", "口味", "flavor_combo", "数量", "单价(美金)", "小计(美金)", "本单总金额(美金)", "notes"].map((h) => (
                   <th key={h} className="border px-2 py-2 text-left">{h}</th>
                 ))}
               </tr>
@@ -138,9 +151,9 @@ export default function CustomerDetailPage() {
                     <td className="border px-2 py-1">{it.variant ?? ""}</td>
                     <td className="border px-2 py-1">{it.flavor_combo ?? ""}</td>
                     <td className="border px-2 py-1">{it.quantity}</td>
-                    <td className="border px-2 py-1">{it.unit_price}</td>
-                    <td className="border px-2 py-1">{it.line_total}</td>
-                    <td className="border px-2 py-1">{idx === 0 ? h.customer_total : ""}</td>
+                    <td className="border px-2 py-1">{formatPrice(it.unit_price)}</td>
+                    <td className="border px-2 py-1">{formatMoney(it.line_total)}</td>
+                    <td className="border px-2 py-1">{idx === 0 ? formatMoney(h.customer_total) : ""}</td>
                     <td className="border px-2 py-1">{idx === 0 ? h.notes : ""}</td>
                   </tr>
                 ))

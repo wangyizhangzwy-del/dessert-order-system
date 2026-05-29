@@ -6,17 +6,25 @@ import { SavedJielong } from "@/lib/types";
 import { deleteJielong, getSavedJielongs } from "@/lib/storage";
 import { sortByRecentDate } from "@/lib/sort";
 import { buildBatchTitleMap, formatDateWithWeekday } from "@/lib/dateFormat";
+import { formatMoney } from "@/lib/moneyFormat";
+import { LoadingPanel } from "@/app/components/LoadingPanel";
 
 export default function BatchesPage() {
   const [batches, setBatches] = useState<SavedJielong[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
+        setLoadError("");
         const saved = await getSavedJielongs();
         if (active) setBatches([...saved].sort(sortByRecentDate));
+      } catch (e) {
+        if (active) {
+          setLoadError(e instanceof Error ? e.message : "加载失败，请刷新页面重试。");
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -45,7 +53,9 @@ export default function BatchesPage() {
         <h1 className="text-xl font-bold">历史接龙</h1>
       </div>
       {loading ? (
-        <div className="rounded-xl bg-white p-4 text-sm text-zinc-500 shadow-sm">正在加载...</div>
+        <LoadingPanel />
+      ) : loadError ? (
+        <div className="rounded-xl bg-white p-4 text-sm text-red-700 shadow-sm">{loadError}</div>
       ) : batches.length === 0 ? (
         <div className="rounded-xl bg-white p-4 text-sm text-zinc-600 shadow-sm">暂无接龙</div>
       ) : (
@@ -57,7 +67,7 @@ export default function BatchesPage() {
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold">{displayName}</p>
                   <p className="text-sm text-zinc-600">
-                    日期：{formatDateWithWeekday(batch.order_date)} · {(batch.total_amount ?? 0).toFixed(1)} · 客户{" "}
+                    日期：{formatDateWithWeekday(batch.order_date)} · {formatMoney(batch.total_amount ?? 0)} · 客户{" "}
                     {(batch.customer_summary_rows ?? []).length}
                   </p>
                 </div>
