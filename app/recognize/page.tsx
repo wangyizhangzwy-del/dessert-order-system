@@ -1134,30 +1134,45 @@ function RecognizePageInner() {
                   <td className="border px-2 py-1">{row.wechat_id}</td>
                   <td className="border px-2 py-1">{row.items_summary}</td>
                   <td className="border px-2 py-1">{formatMoney(row.customer_total)}</td>
-                  <td className="border px-2 py-1">
-                    <div className="flex flex-col gap-1">
+                  <td className="border px-2 py-1 align-top">
+                    {dm.mode === "custom" ? (
+                      <div className="flex min-w-0 max-w-[220px] items-center gap-1">
+                        <input
+                          className="h-7 min-w-0 flex-1 rounded border px-1.5 text-sm leading-tight"
+                          placeholder="地址"
+                          value={dm.customText}
+                          onChange={(e) => updateDeliveryCustom(row.wechat_id, e.target.value)}
+                        />
+                        <select
+                          aria-label="切换派送方式"
+                          className="h-7 w-9 shrink-0 rounded border px-0.5 text-xs text-zinc-600"
+                          defaultValue=""
+                          onChange={(e) => {
+                            const next = e.target.value as DeliveryMode;
+                            if (next && next !== "custom") {
+                              updateDeliveryMode(row.wechat_id, next);
+                              e.target.value = "";
+                            }
+                          }}
+                        >
+                          <option value="">⇄</option>
+                          <option value="default">{defaultAddr?.trim() || "默认地址"}</option>
+                          <option value="pickup">自取</option>
+                        </select>
+                      </div>
+                    ) : (
                       <select
-                        className="w-full rounded border p-1 text-sm"
+                        className="h-7 w-full max-w-[220px] rounded border px-1.5 text-sm"
                         value={dm.mode}
                         onChange={(e) =>
                           updateDeliveryMode(row.wechat_id, e.target.value as DeliveryMode)
                         }
                       >
-                        <option value="default">
-                          默认地址{defaultAddr ? ` (${defaultAddr})` : ""}
-                        </option>
+                        <option value="default">{defaultAddr?.trim() || "默认地址"}</option>
                         <option value="pickup">自取</option>
-                        <option value="custom">自定义</option>
+                        <option value="custom">输入地址…</option>
                       </select>
-                      {dm.mode === "custom" ? (
-                        <input
-                          className="w-full rounded border p-1 text-sm"
-                          placeholder="输入自定义派送方式/地址"
-                          value={dm.customText}
-                          onChange={(e) => updateDeliveryCustom(row.wechat_id, e.target.value)}
-                        />
-                      ) : null}
-                    </div>
+                    )}
                   </td>
                 </tr>
                 );

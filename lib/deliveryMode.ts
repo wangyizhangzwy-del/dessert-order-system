@@ -54,6 +54,6 @@ export function resolveDeliveryMode(orderNotes: string, defaultAddr?: string): D
 
 export function deliveryModeLabel(state: DeliveryModeState, defaultAddr?: string): string {
   if (state.mode === "pickup") return "自取";
-  if (state.mode === "custom") return state.customText.trim() || "自定义";
+  if (state.mode === "custom") return state.customText.trim();
   return defaultAddr?.trim() || "默认地址";
 }
