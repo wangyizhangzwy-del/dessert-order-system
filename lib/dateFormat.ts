@@ -73,6 +73,17 @@ export function formatDateWithWeekday(input?: string | null): string {
   return `${p.month}/${p.day} ${wd}`;
 }
 
+/** 图表 X 轴：拥挤时用 MM-DD 周X 紧凑格式，仍保留 weekday。 */
+export function formatChartDateLabel(input?: string | null, compact = false): string {
+  if (!compact) return formatDateWithWeekday(input);
+  const p = parseLocalDate(input);
+  if (p) {
+    const wd = weekdayFromParts(p);
+    return `${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")} ${wd}`;
+  }
+  return formatDateWithWeekday(input);
+}
+
 export function formatDateRangeMd(start?: string, end?: string): string {
   const fmt = (s: string) => {
     const p = parseLocalDate(s);

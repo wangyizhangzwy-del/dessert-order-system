@@ -1,14 +1,16 @@
 import { SavedJielong } from "@/lib/types";
 import { parseOrderDate } from "@/lib/sort";
+import { isGiftProductName, normalizeProductName } from "@/lib/productNormalize";
+import { roundMoney } from "@/lib/moneyFormat";
 
 export type ProductTag = "爆品" | "低销量" | "高销售额";
 
 export interface ProductAnalyticsRow {
   key: string;
-  sku: string;
+  normalized_name: string;
+  /** @deprecated display alias — same as normalized_name */
   cake_name: string;
-  variant: string;
-  flavor_combo: string;
+  raw_names: string[];
   total_quantity: number;
   batch_count: number;
   total_revenue: number;
@@ -19,12 +21,28 @@ export interface ProductAnalyticsRow {
   last_order_date: string;
 }
 
-function roundMoney(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
+function itemDisplayName(item: { cake_name?: string; display_name?: string }): string {
+  return (item.display_name || item.cake_name || "").trim();
+}
+
+function shouldSkipItem(item: {
+  cake_name?: string;
+  display_name?: string;
+  quantity: number;
+  line_total: number;
+}): boolean {
+  const name = itemDisplayName(item);
+  if (isGiftProductName(name)) {
+    return item.quantity <= 0 || item.line_total <= 0;
+  }
+  return false;
 }
 
 function assignTags(
-  rows: Omit<ProductAnalyticsRow, "tags" | "revenue_share" | "quantity_share" | "avg_unit_price">[],
+  rows: Omit<
+    ProductAnalyticsRow,
+    "tags" | "revenue_share" | "quantity_share" | "avg_unit_price" | "cake_name"
+  >[],
   totalRevenue: number,
   totalQuantity: number
 ): ProductAnalyticsRow[] {
@@ -41,6 +59,7 @@ function assignTags(
     if (r.total_revenue >= revThreshold && r.total_revenue > 0) tags.push("高销售额");
     return {
       ...r,
+      cake_name: r.normalized_name,
       avg_unit_price:
         r.total_quantity > 0 ? roundMoney(r.total_revenue / r.total_quantity) : 0,
       revenue_share: totalRevenue > 0 ? roundMoney(r.total_revenue / totalRevenue) : 0,
@@ -51,25 +70,34 @@ function assignTags(
 }
 
 export function buildProductAnalytics(saved: SavedJielong[]): ProductAnalyticsRow[] {
-  const map = new Map<string, ProductAnalyticsRow & { _batches: Set<string> }>();
+  const map = new Map<
+    string,
+    ProductAnalyticsRow & { _batches: Set<string>; _rawSet: Set<string> }
+  >();
+
   for (const j of saved) {
     const orders = j.parsed_orders.filter((o) => !o.is_example);
     for (const order of orders) {
       for (const item of order.items) {
-        const key = `${item.sku_code}__${item.cake_name}__${item.variant ?? ""}__${item.flavor_combo ?? ""}`;
+        if (shouldSkipItem(item)) continue;
+
+        const rawName = itemDisplayName(item) || item.cake_name || "未命名商品";
+        const normalized = normalizeProductName(rawName);
+        const key = normalized;
+
         const existing = map.get(key);
         if (existing) {
           existing.total_quantity += item.quantity;
           existing.total_revenue += item.line_total;
           existing._batches.add(j.batch_id);
+          existing._rawSet.add(rawName);
           if (j.order_date > existing.last_order_date) existing.last_order_date = j.order_date;
         } else {
           map.set(key, {
             key,
-            sku: item.sku_code,
-            cake_name: item.cake_name,
-            variant: item.variant ?? "",
-            flavor_combo: item.flavor_combo ?? "",
+            normalized_name: normalized,
+            cake_name: normalized,
+            raw_names: [rawName],
             total_quantity: item.quantity,
             batch_count: 1,
             total_revenue: item.line_total,
@@ -79,6 +107,7 @@ export function buildProductAnalytics(saved: SavedJielong[]): ProductAnalyticsRo
             tags: [],
             last_order_date: j.order_date,
             _batches: new Set([j.batch_id]),
+            _rawSet: new Set([rawName]),
           });
         }
       }
@@ -86,10 +115,14 @@ export function buildProductAnalytics(saved: SavedJielong[]): ProductAnalyticsRo
   }
 
   const base = [...map.values()]
-    .map((r) => ({ ...r, batch_count: r._batches.size }))
+    .map((r) => ({
+      ...r,
+      raw_names: [...r._rawSet].sort((a, b) => a.localeCompare(b, "zh-CN")),
+      batch_count: r._batches.size,
+    }))
     .sort((a, b) => {
-      if (b.total_quantity !== a.total_quantity) return b.total_quantity - a.total_quantity;
       if (b.total_revenue !== a.total_revenue) return b.total_revenue - a.total_revenue;
+      if (b.total_quantity !== a.total_quantity) return b.total_quantity - a.total_quantity;
       const da = parseOrderDate(a.last_order_date) ?? 0;
       const db = parseOrderDate(b.last_order_date) ?? 0;
       return db - da;
@@ -123,7 +156,7 @@ export function buildProductShareSlices(
   const rest = sorted.slice(topN);
   const valueKey = mode === "revenue" ? "total_revenue" : "total_quantity";
   const slices: ProductShareSlice[] = top.map((r, i) => ({
-    label: r.cake_name.length > 10 ? `${r.cake_name.slice(0, 10)}…` : r.cake_name,
+    label: r.normalized_name.length > 10 ? `${r.normalized_name.slice(0, 10)}…` : r.normalized_name,
     value: r[valueKey],
     color: PIE_COLORS[i % PIE_COLORS.length],
   }));

@@ -9,10 +9,13 @@
     "lint": "eslint",
     "test:parser": "node --import tsx scripts/test-parser.ts",
     "test:analytics": "node --import tsx scripts/test-analytics.ts",
+    "test:product-analytics": "node --import tsx scripts/test-product-analytics.ts",
     "test:delivery": "node --import tsx scripts/test-delivery-mode.ts",
     "test:date": "node --import tsx scripts/test-date-format.ts",
     "test:february-import": "node --import tsx scripts/test-february-import.ts",
-    "import:february": "node --import tsx scripts/importFebruaryOrders.ts"
+    "test:january-import": "node --import tsx scripts/test-january-import.ts",
+    "import:february": "node --import tsx scripts/importFebruaryOrders.ts",
+    "import:january": "node --import tsx scripts/importJanuaryOrders.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.2",

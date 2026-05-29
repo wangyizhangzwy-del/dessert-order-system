@@ -9,12 +9,9 @@ import {
 } from "@/lib/performanceAnalytics";
 import { SavedJielong } from "@/lib/types";
 import { parseOrderDate } from "@/lib/sort";
-import { formatDateRangeMd, formatDateWithWeekday } from "@/lib/dateFormat";
+import { formatDateRangeMd, formatChartDateLabel, formatDateWithWeekday } from "@/lib/dateFormat";
+import { formatMoney } from "@/lib/moneyFormat";
 import { BarChart, LineChart } from "@/app/components/Charts";
-
-function formatMoney(n: number): string {
-  return (Math.round((n + Number.EPSILON) * 100) / 100).toFixed(1);
-}
 
 function batchMonth(orderDate?: string): number | null {
   const ts = parseOrderDate(orderDate);
@@ -87,7 +84,8 @@ export default function PerformancePage() {
     );
   }
 
-  const labels = data.daily.map((d) => formatDateWithWeekday(d.date));
+  const compactChartLabels = data.daily.length > 6;
+  const labels = data.daily.map((d) => formatChartDateLabel(d.date, compactChartLabels));
   const dateRange =
     data.daily.length > 0
       ? formatDateRangeMd(data.daily[0].date, data.daily[data.daily.length - 1].date)
@@ -140,13 +138,13 @@ export default function PerformancePage() {
           {data.bestBatch ? (
             <p>
               最高销售接龙：<span className="font-semibold">{data.bestBatch.batch_name}</span>
-              （{formatDateWithWeekday(data.bestBatch.order_date)} · {formatMoney(data.bestBatch.revenue)} 元）
+              （{formatDateWithWeekday(data.bestBatch.order_date)} · {formatMoney(data.bestBatch.revenue)}）
             </p>
           ) : null}
           {data.worstBatch ? (
             <p className="mt-1">
               最低销售接龙：<span className="font-semibold">{data.worstBatch.batch_name}</span>
-              （{formatDateWithWeekday(data.worstBatch.order_date)} · {formatMoney(data.worstBatch.revenue)} 元）
+              （{formatDateWithWeekday(data.worstBatch.order_date)} · {formatMoney(data.worstBatch.revenue)}）
             </p>
           ) : null}
         </div>
@@ -159,7 +157,7 @@ export default function PerformancePage() {
           values={data.daily.map((d) => d.revenue)}
           color="#10b981"
           formatValue={formatMoney}
-          yAxisLabel="销售额"
+          yAxisLabel="销售额 ($)"
         />
       </div>
 
@@ -169,7 +167,7 @@ export default function PerformancePage() {
           labels={labels}
           series={[{ name: "销售额", color: "#10b981", values: data.daily.map((d) => d.revenue) }]}
           formatValue={formatMoney}
-          yAxisLabel="销售额"
+          yAxisLabel="销售额 ($)"
         />
       </div>
 

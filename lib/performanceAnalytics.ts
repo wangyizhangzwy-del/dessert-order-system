@@ -1,6 +1,8 @@
 import { SavedJielong } from "@/lib/types";
 import { parseOrderDate } from "@/lib/sort";
 import { buildProductAnalytics, ProductAnalyticsRow } from "@/lib/productAnalytics";
+import { formatMoney } from "@/lib/moneyFormat";
+import { formatDateWithWeekday } from "@/lib/dateFormat";
 
 export interface DailyPerformance {
   date: string;
@@ -146,7 +148,7 @@ export function buildPerformanceInsights(
   const products = buildProductAnalytics(saved);
   if (products.length === 0) return ["暂无足够数据生成经营洞察。"];
 
-  const topRev = products[0];
+  const topQty = [...products].sort((a, b) => b.total_quantity - a.total_quantity)[0];
   const byRev = [...products].sort((a, b) => b.total_revenue - a.total_revenue);
   const top3RevShare =
     summary.totalRevenue > 0
@@ -154,18 +156,18 @@ export function buildPerformanceInsights(
       : 0;
 
   if (summary.bestDay) {
-    notes.push(`最高销售额出现在 ${summary.bestDay.date}（${summary.bestDay.revenue.toFixed(1)} 元）。`);
+    notes.push(`最高销售额出现在 ${formatDateWithWeekday(summary.bestDay.date)}（${formatMoney(summary.bestDay.revenue)}）。`);
   }
   if (summary.bestBatch) {
     notes.push(
-      `最高销售接龙：${summary.bestBatch.batch_name}（${summary.bestBatch.revenue.toFixed(1)} 元）。`
+      `最高销售接龙：${summary.bestBatch.batch_name}（${formatMoney(summary.bestBatch.revenue)}）。`
     );
   }
-  if (topRev) {
-    notes.push(`销量最高产品：${topRev.cake_name}（${topRev.total_quantity} 件）。`);
+  if (topQty) {
+    notes.push(`销量最高产品：${topQty.normalized_name}（${topQty.total_quantity} 件）。`);
   }
   if (byRev[0]) {
-    notes.push(`销售额最高产品：${byRev[0].cake_name}（${byRev[0].total_revenue.toFixed(1)} 元）。`);
+    notes.push(`销售额最高产品：${byRev[0].normalized_name}（${formatMoney(byRev[0].total_revenue)}）。`);
   }
   if (top3RevShare >= divisorThreshold(products.length)) {
     notes.push(`销量/销售额集中在前 3 个产品（约占 ${Math.round(top3RevShare * 100)}% 销售额）。`);

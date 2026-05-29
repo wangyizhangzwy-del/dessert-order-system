@@ -8,11 +8,11 @@ export interface ChartSeries {
   values: number[];
 }
 
-const HEIGHT = 240;
+const BASE_HEIGHT = 240;
 const PAD_TOP = 28;
-const PAD_BOTTOM = 32;
+const PAD_BOTTOM_NORMAL = 32;
+const PAD_BOTTOM_ROTATED = 58;
 const SLOT_W = 76;
-const PLOT_H = HEIGHT - PAD_TOP - PAD_BOTTOM;
 
 function chartWidth(count: number): number {
   return Math.max(count * SLOT_W + 40, 320);
@@ -23,12 +23,58 @@ function axisMax(values: number[]): number {
   return max > 0 ? max : 1;
 }
 
+function xAxisLayout(labels: string[]): {
+  rotate: boolean;
+  padBottom: number;
+  height: number;
+  plotH: number;
+} {
+  const maxLen = labels.reduce((m, l) => Math.max(m, l.length), 0);
+  const rotate = labels.length > 6 || maxLen > 14;
+  const padBottom = rotate ? PAD_BOTTOM_ROTATED : PAD_BOTTOM_NORMAL;
+  const height = BASE_HEIGHT - PAD_BOTTOM_NORMAL + padBottom;
+  const plotH = height - PAD_TOP - padBottom;
+  return { rotate, padBottom, height, plotH };
+}
+
+function XAxisLabel({
+  label,
+  x,
+  y,
+  rotate,
+}: {
+  label: string;
+  x: number;
+  y: number;
+  rotate: boolean;
+}) {
+  if (rotate) {
+    return (
+      <text
+        x={x}
+        y={y}
+        textAnchor="end"
+        fontSize="10"
+        fill="#71717a"
+        transform={`rotate(-40 ${x} ${y})`}
+      >
+        {label}
+      </text>
+    );
+  }
+  return (
+    <text x={x} y={y} textAnchor="middle" fontSize="10" fill="#71717a">
+      {label}
+    </text>
+  );
+}
+
 // 分组柱状图，柱顶始终显示数值（不依赖 hover）。
 export function BarChart({
   labels,
   series,
   formatValue = (n) => String(n),
-  yAxisLabel = "销售额",
+  yAxisLabel = "销售额 ($)",
 }: {
   labels: string[];
   series: ChartSeries[];
@@ -40,11 +86,13 @@ export function BarChart({
   const max = axisMax(series.flatMap((s) => s.values));
   const groupW = SLOT_W * 0.6;
   const barW = groupW / Math.max(series.length, 1);
-  const baseline = PAD_TOP + PLOT_H;
+  const { rotate, height, plotH } = xAxisLayout(labels);
+  const baseline = PAD_TOP + plotH;
+  const labelY = height - (rotate ? 6 : 11);
 
   return (
-    <div className="overflow-x-auto">
-      <svg width={width} height={HEIGHT} className="block" role="img">
+    <div className="overflow-x-auto pb-1">
+      <svg width={width} height={height} className="block" role="img">
         <line x1={leftPad} y1={PAD_TOP} x2={leftPad} y2={baseline} stroke="#e4e4e7" />
         <line x1={leftPad} y1={baseline} x2={width} y2={baseline} stroke="#e4e4e7" />
         <text x={8} y={PAD_TOP + 8} fontSize="10" fill="#71717a" transform={`rotate(-90 8 ${PAD_TOP + 8})`}>
@@ -56,7 +104,7 @@ export function BarChart({
             <Fragment key={`${label}-${i}`}>
               {series.map((s, si) => {
                 const v = s.values[i] ?? 0;
-                const h = (v / max) * PLOT_H;
+                const h = (v / max) * plotH;
                 const x = slotX + (SLOT_W - groupW) / 2 + si * barW;
                 const y = baseline - h;
                 return (
@@ -75,9 +123,7 @@ export function BarChart({
                   </Fragment>
                 );
               })}
-              <text x={slotX + SLOT_W / 2} y={HEIGHT - 11} textAnchor="middle" fontSize="10" fill="#71717a">
-                {label}
-              </text>
+              <XAxisLabel label={label} x={slotX + SLOT_W / 2} y={labelY} rotate={rotate} />
             </Fragment>
           );
         })}
@@ -92,7 +138,7 @@ export function LineChart({
   values,
   color = "#10b981",
   formatValue = (n) => String(n),
-  yAxisLabel = "销售额",
+  yAxisLabel = "销售额 ($)",
 }: {
   labels: string[];
   values: number[];
@@ -102,15 +148,17 @@ export function LineChart({
 }) {
   const width = chartWidth(labels.length);
   const max = axisMax(values);
-  const baseline = PAD_TOP + PLOT_H;
+  const { rotate, height, plotH } = xAxisLayout(labels);
+  const baseline = PAD_TOP + plotH;
   const leftPad = 36;
+  const labelY = height - (rotate ? 6 : 11);
   const pointX = (i: number) => leftPad + i * SLOT_W + SLOT_W / 2;
-  const pointY = (v: number) => baseline - (v / max) * PLOT_H;
+  const pointY = (v: number) => baseline - (v / max) * plotH;
   const path = values.map((v, i) => `${i === 0 ? "M" : "L"} ${pointX(i)} ${pointY(v)}`).join(" ");
 
   return (
-    <div className="overflow-x-auto">
-      <svg width={width} height={HEIGHT} className="block" role="img">
+    <div className="overflow-x-auto pb-1">
+      <svg width={width} height={height} className="block" role="img">
         <line x1={leftPad} y1={PAD_TOP} x2={leftPad} y2={baseline} stroke="#e4e4e7" />
         <line x1={leftPad} y1={baseline} x2={width} y2={baseline} stroke="#e4e4e7" />
         <text x={8} y={PAD_TOP + 8} fontSize="10" fill="#71717a" transform={`rotate(-90 8 ${PAD_TOP + 8})`}>
@@ -123,9 +171,7 @@ export function LineChart({
             <text x={pointX(i)} y={pointY(v) - 9} textAnchor="middle" fontSize="11" fontWeight="600" fill="#3f3f46">
               {formatValue(v)}
             </text>
-            <text x={pointX(i)} y={HEIGHT - 11} textAnchor="middle" fontSize="10" fill="#71717a">
-              {labels[i]}
-            </text>
+            <XAxisLabel label={labels[i]} x={pointX(i)} y={labelY} rotate={rotate} />
           </Fragment>
         ))}
       </svg>
