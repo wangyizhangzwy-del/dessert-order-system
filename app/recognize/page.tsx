@@ -25,7 +25,6 @@ import {
   generateBatchName,
   isAutoBatchName,
 } from "@/lib/dateFormat";
-import { TEST_RELAY_TEXT } from "@/lib/testRelay";
 import { MenuItem, ParsedOrder } from "@/lib/types";
 import { formatMoney, formatPrice, roundMoney } from "@/lib/moneyFormat";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -919,15 +918,6 @@ function RecognizePageInner() {
           placeholder="在这里粘贴接龙文本"
         />
         <div className="mt-3 flex gap-2">
-          <button
-            onClick={() => {
-              setRawText(TEST_RELAY_TEXT);
-              setMessage("已加载测试接龙");
-            }}
-            className="rounded-lg bg-zinc-200 px-4 py-3 text-sm font-medium"
-          >
-            加载测试接龙
-          </button>
           <button onClick={onParse} className="rounded-lg bg-zinc-900 px-4 py-3 text-sm font-medium text-white">
             识别接龙
           </button>
