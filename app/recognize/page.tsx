@@ -39,9 +39,11 @@ import {
   type SafeEditableRow,
 } from "@/lib/recognizeSafe";
 import { ErrorBoundary } from "@/app/components/ErrorBoundary";
+import { DeliveryRouteAnalysis } from "@/app/components/DeliveryRouteAnalysis";
 import { LoadingPanel } from "@/app/components/LoadingPanel";
 import { useDeferredRender } from "@/app/hooks/useDeferredRender";
 import { safeLocaleCompare } from "@/lib/safeLocale";
+import type { DeliveryRouteCustomerInput } from "@/lib/deliveryRoute";
 import { useRouter, useSearchParams } from "next/navigation";
 
 type RowStatus = "success" | "warning" | "failed";
@@ -485,6 +487,35 @@ function RecognizePageInner() {
     const dm = getDeliveryModeForCustomer(wechatId, notes);
     return needsDeliveryFromMode(dm.mode);
   };
+
+  const deliveryRouteInputs = useMemo((): DeliveryRouteCustomerInput[] => {
+    const rows = Array.isArray(customerSummaryByNotes) ? customerSummaryByNotes : [];
+    return rows.map((c) => {
+      const wechatId = safeStr(c?.wechat_id).trim() || "未知客户";
+      const notes = safeStr(c?.notes);
+      const dm = getDeliveryModeForCustomer(wechatId, notes);
+      let addressForMatch = "";
+      if (dm.mode === "custom") {
+        addressForMatch = safeStr(dm.customText).trim();
+      } else if (dm.mode === "default") {
+        addressForMatch = safeStr(customerAddresses[wechatId]).trim();
+      }
+      return {
+        wechatId,
+        needsDelivery: getNeedsDeliveryForCustomer(wechatId, notes),
+        deliveryMode: dm.mode,
+        addressForMatch,
+        deliveryDisplay: deliveryModeLabel(dm, customerAddresses[wechatId]),
+        notes,
+      };
+    });
+  }, [
+    customerSummaryByNotes,
+    customerAddresses,
+    deliveryModes,
+    customerNeedsDelivery,
+    customerNeedsDeliveryManual,
+  ]);
 
   const refreshCustomerAddresses = async () => {
     const customers = await getCustomers();
@@ -1310,6 +1341,8 @@ function RecognizePageInner() {
           </table>
         </div>
       </div>
+
+      <DeliveryRouteAnalysis customers={deliveryRouteInputs} />
 
       <div className="rounded-xl bg-white p-4 shadow-sm">
         <div className="flex flex-wrap gap-2">
