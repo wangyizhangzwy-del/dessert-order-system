@@ -2,7 +2,9 @@
 
 import { MouseEvent, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { parseWechatRelay } from "@/lib/parser";
+import Link from "next/link";
 import {
+  clearDraft,
   getSavedJielongById,
   isCloudBackend,
   saveDraft,
@@ -542,50 +544,6 @@ function RecognizePageInner() {
     return toTsv(table);
   };
 
-  const copyOrderDetail = async () => {
-    const header = [
-      "序号",
-      "raw_line",
-      "wechat_id",
-      "sku_code",
-      "variant",
-      "flavor_combo",
-      "cake_name",
-      "display_name",
-      "quantity",
-      "unit_price",
-      "line_total",
-      "notes",
-      "status",
-      "warning_reason",
-    ];
-    const table = [
-      header,
-      ...normalizedRows.map((r) => [
-        String(r.sequence),
-        r.raw_line,
-        r.wechat_id,
-        r.sku_code,
-        r.variant,
-        r.flavor_combo,
-        r.cake_name,
-        r.display_name,
-        String(r.quantity),
-        formatPrice(r.unit_price),
-        formatMoney(r.line_total),
-        r.notes,
-        r.status,
-        r.warning_reason,
-      ]),
-    ];
-    try {
-      await copyText(toTsv(table));
-      setMessage("已复制订单明细到剪贴板，可以粘贴到 Excel");
-    } catch {
-      setMessage("复制失败，请重试");
-    }
-  };
-
   const copyCustomerSummary = async () => {
     const table = [
       ["客户", "商品汇总", "客户总金额", "备注", "状态"],
@@ -681,6 +639,22 @@ function RecognizePageInner() {
           : `保存失败，请重试：${detail}`
       );
     }
+  };
+
+  const clearCurrentBatch = () => {
+    if (!window.confirm("确定删除本次接龙？将清空当前输入和识别结果（不影响已保存的历史接龙）。")) {
+      return;
+    }
+    setRawText("");
+    setRows([]);
+    setMenuItems([]);
+    setCustomerFlags({});
+    setOrderDate("5.28");
+    setBatchName(`接龙-${new Date().toLocaleString()}`);
+    setCurrentBatchId(null);
+    clearDraft().catch(() => {});
+    setMessage("已清空本次接龙");
+    router.replace("/recognize");
   };
 
   const updateCustomerFlag = (wechatId: string, key: keyof CustomerFlags, value: boolean) => {
@@ -786,12 +760,6 @@ function RecognizePageInner() {
             {tableExpanded ? "缩小到3行" : "完全展开"}
           </button>
           <button onClick={addRow} className="rounded bg-zinc-200 px-3 py-2 text-sm">新增明细行</button>
-          <button
-            onClick={copyOrderDetail}
-            className="rounded bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
-          >
-            复制订单明细到 Excel
-          </button>
         </div>
         <div
           className={`mt-3 overflow-x-auto overflow-y-auto border rounded ${
@@ -993,6 +961,20 @@ function RecognizePageInner() {
         <button onClick={saveBatch} className="mt-3 w-full rounded-lg bg-zinc-900 px-4 py-3 font-medium text-white">
           保存本次接龙
         </button>
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <button
+            onClick={clearCurrentBatch}
+            className="rounded-md bg-zinc-200 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-300"
+          >
+            删除本次接龙
+          </button>
+          <Link
+            href="/batches"
+            className="rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-700"
+          >
+            打开历史接龙
+          </Link>
+        </div>
       </div>
     </div>
   );

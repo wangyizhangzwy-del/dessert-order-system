@@ -49,6 +49,11 @@ export async function getCustomers(): Promise<Customer[]> {
   return customers;
 }
 
+export async function rebuildCustomerProfiles(): Promise<{ updated: number }> {
+  const res = await api<{ ok: boolean; updated?: number }>("/api/customers/rebuild", { method: "POST" });
+  return { updated: res.updated ?? 0 };
+}
+
 export async function getSettings(): Promise<AppSettings> {
   const { settings } = await api<{ settings: AppSettings }>("/api/settings");
   return settings;

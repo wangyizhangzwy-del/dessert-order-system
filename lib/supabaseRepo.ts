@@ -6,6 +6,7 @@ import {
   SavedJielong,
 } from "@/lib/types";
 import { applyJielongToCustomers } from "@/lib/customerHistory";
+import { deriveAddressFromHistory } from "@/lib/address";
 import { getSupabaseAdmin } from "@/lib/supabaseServer";
 
 function nowIso(): string {
@@ -155,6 +156,24 @@ export async function listCustomers(): Promise<Customer[]> {
   return (data ?? []).map((r) => rowToCustomer(r as CustomerRow));
 }
 
+// 回填：根据客户历史订单备注提取地址，写入 default_address（已有真实地址不被空值覆盖）。
+export async function backfillCustomerAddresses(): Promise<{ updated: number }> {
+  const db = getSupabaseAdmin();
+  const customers = await listCustomers();
+  const changed: CustomerRow[] = [];
+  for (const customer of customers) {
+    const derived = deriveAddressFromHistory(customer.order_history);
+    if (derived && derived !== customer.default_address) {
+      changed.push(customerToRow({ ...customer, default_address: derived, updated_at: nowIso() }));
+    }
+  }
+  if (changed.length > 0) {
+    const { error } = await db.from("customers").upsert(changed, { onConflict: "wechat_id" });
+    if (error) throw new Error(error.message);
+  }
+  return { updated: changed.length };
+}
+
 export async function getSettings(): Promise<AppSettings> {
   const db = getSupabaseAdmin();
   const { data, error } = await db.from("app_settings").select("settings").eq("id", 1).maybeSingle();
@@ -228,7 +247,9 @@ export async function importAll(data: unknown): Promise<{ ok: boolean; error?: s
   }
 
   if (parsed.customers.length > 0) {
-    const customerRows = parsed.customers.map((c) => customerToRow(c));
+    const customerRows = parsed.customers.map((c) =>
+      customerToRow({ ...c, default_address: c.default_address || deriveAddressFromHistory(c.order_history) || undefined })
+    );
     const { error } = await db.from("customers").upsert(customerRows, { onConflict: "wechat_id" });
     if (error) return { ok: false, error: error.message };
   }
@@ -236,5 +257,8 @@ export async function importAll(data: unknown): Promise<{ ok: boolean; error?: s
   if (parsed.app_settings) {
     await saveSettings(parsed.app_settings);
   }
+
+  // 迁移/导入后，根据历史备注回填客户地址。
+  await backfillCustomerAddresses();
   return { ok: true };
 }

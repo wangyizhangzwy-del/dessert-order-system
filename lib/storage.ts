@@ -37,6 +37,11 @@ export async function getCustomers(): Promise<Customer[]> {
   return useSupabase() ? remote.getCustomers() : local.getCustomers();
 }
 
+// 回填客户地址（从历史备注提取 default_address 并持久化）。
+export async function rebuildCustomerProfiles(): Promise<{ updated: number }> {
+  return useSupabase() ? remote.rebuildCustomerProfiles() : local.backfillCustomerAddresses();
+}
+
 export async function getSettings(): Promise<AppSettings> {
   return useSupabase() ? remote.getSettings() : local.getSettings();
 }

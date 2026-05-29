@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Customer } from "@/lib/types";
-import { getCustomers } from "@/lib/storage";
+import { getCustomers, rebuildCustomerProfiles } from "@/lib/storage";
 import { parseOrderDate } from "@/lib/sort";
+import { deriveAddressFromHistory } from "@/lib/address";
+
+function customerAddress(c: Customer): string {
+  return c.default_address || deriveAddressFromHistory(c.order_history) || "-";
+}
 
 function orderCount(c: Customer): number {
   return new Set(c.order_history.map((h) => h.batch_id)).size;
@@ -20,11 +25,25 @@ function lastOrderTimestamp(c: Customer): number {
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [query, setQuery] = useState("");
+  const rebuiltRef = useRef(false);
 
   useEffect(() => {
     let active = true;
     (async () => {
-      const data = await getCustomers();
+      let data = await getCustomers();
+      // 已有历史但 default_address 缺失时，自动回填一次并重新拉取（无需手动编辑）。
+      const needsRebuild = data.some(
+        (c) => !c.default_address && deriveAddressFromHistory(c.order_history)
+      );
+      if (needsRebuild && !rebuiltRef.current) {
+        rebuiltRef.current = true;
+        try {
+          await rebuildCustomerProfiles();
+          data = await getCustomers();
+        } catch {
+          // 回填失败不阻塞展示，下方仍会用派生地址兜底显示。
+        }
+      }
       if (active) setCustomers(data);
     })();
     return () => {
@@ -66,7 +85,8 @@ export default function CustomersPage() {
             <div>
               <p className="font-medium">{c.wechat_id}</p>
               <p className="text-xs text-zinc-600">
-                点单次数: {new Set(c.order_history.map((h) => h.batch_id)).size}
+                <span>点单次数: {new Set(c.order_history.map((h) => h.batch_id)).size}</span>
+                <span className="ml-4">地址: {customerAddress(c)}</span>
               </p>
             </div>
             <Link

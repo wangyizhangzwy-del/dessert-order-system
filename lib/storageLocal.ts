@@ -7,6 +7,7 @@ import {
   SavedJielong,
 } from "@/lib/types";
 import { applyJielongToCustomers } from "@/lib/customerHistory";
+import { deriveAddressFromHistory } from "@/lib/address";
 
 const SAVED_JIELONGS_KEY = "dessert_app_saved_jielongs";
 const CUSTOMERS_KEY = "dessert_app_customers";
@@ -128,12 +129,32 @@ export function importAllData(data: unknown): { ok: boolean; error?: string } {
       return { ok: false, error: "JSON 格式不正确" };
     }
     setJson(SAVED_JIELONGS_KEY, parsed.saved_jielongs);
-    setJson(CUSTOMERS_KEY, parsed.customers);
+    const customers = parsed.customers.map((c) => ({
+      ...c,
+      default_address: c.default_address || deriveAddressFromHistory(c.order_history) || undefined,
+    }));
+    setJson(CUSTOMERS_KEY, customers);
     if (parsed.app_settings) setJson(SETTINGS_KEY, parsed.app_settings);
     return { ok: true };
   } catch {
     return { ok: false, error: "导入失败，JSON 解析异常" };
   }
+}
+
+// 回填：根据历史订单备注提取地址写入 default_address。
+export function backfillCustomerAddresses(): { updated: number } {
+  const customers = getCustomers();
+  let updated = 0;
+  const next = customers.map((c) => {
+    const derived = deriveAddressFromHistory(c.order_history);
+    if (derived && derived !== c.default_address) {
+      updated += 1;
+      return { ...c, default_address: derived, updated_at: nowIso() };
+    }
+    return c;
+  });
+  if (updated > 0) saveCustomers(next);
+  return { updated };
 }
 
 // 读取本机 localStorage 原始数据（用于迁移到云端）。
