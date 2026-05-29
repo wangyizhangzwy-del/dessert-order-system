@@ -8,7 +8,13 @@ import { buildProductAnalytics } from "@/lib/productAnalytics";
 import { SavedJielong } from "@/lib/types";
 
 function testNormalization() {
-  // 焦糖泡芙
+  // 1. 榛果 / 榛子泡芙（含百香果/海盐焦糖变体，优先于焦糖泡芙）
+  assert.equal(normalizeProductName("榛果泡芙"), "榛果泡芙");
+  assert.equal(normalizeProductName("榛子泡芙"), "榛果泡芙");
+  assert.equal(normalizeProductName("百香果焦糖榛子泡芙"), "榛果泡芙");
+  assert.equal(normalizeProductName("百香果焦糖榛果泡芙"), "榛果泡芙");
+  assert.equal(normalizeProductName("海盐焦糖榛果泡芙"), "榛果泡芙");
+  assert.equal(normalizeProductName("海盐焦糖榛子泡芙"), "榛果泡芙");
   assert.equal(normalizeProductName("焦糖脆壳香草小泡芙"), "焦糖泡芙");
   assert.equal(normalizeProductName("焦糖泡芙"), "焦糖泡芙");
   assert.equal(normalizeProductName("焦糖小泡芙"), "焦糖泡芙");
@@ -22,12 +28,7 @@ function testNormalization() {
   assert.equal(normalizeProductName("原味奶贝"), "肉松小贝");
   assert.equal(normalizeProductName("肉搜小贝"), "肉松小贝");
 
-  // 1. 榛果 / 榛子泡芙
-  assert.equal(normalizeProductName("榛果泡芙"), "榛果泡芙");
-  assert.equal(normalizeProductName("榛子泡芙"), "榛果泡芙");
-
-  // 2. 桂花酒酿
-  assert.equal(normalizeProductName("桂花酒酿盒子"), "桂花酒酿盒子");
+  // 桂花酒酿
   assert.equal(normalizeProductName("酒酿盒子"), "桂花酒酿盒子");
   assert.equal(normalizeProductName("桂花酒酿麻薯蛋糕杯"), "桂花酒酿盒子");
   assert.equal(normalizeProductName("酒酿桂花"), "桂花酒酿盒子");
@@ -49,11 +50,23 @@ function testNormalization() {
   assert.equal(normalizeProductName("麻薯香葱卷"), "香葱卷");
   assert.equal(normalizeProductName("酱多多辣松麻薯火腿香葱卷"), "香葱卷");
 
-  // 5. 咸蛋黄芋泥盒子
+  // 5. 咸蛋黄芋泥盒子（含咸蛋黄麻薯蛋糕盒子）
   assert.equal(normalizeProductName("咸蛋黄芋泥盒子"), "咸蛋黄芋泥盒子");
+  assert.equal(normalizeProductName("咸蛋黄麻薯蛋糕盒子"), "咸蛋黄芋泥盒子");
   assert.equal(normalizeProductName("酱多多芋泥咸蛋黄肉松盒子"), "咸蛋黄芋泥盒子");
   assert.equal(normalizeProductName("芋泥咸蛋黄奶酱盒子"), "咸蛋黄芋泥盒子");
   assert.equal(normalizeProductName("芋泥咸蛋黄盒子"), "咸蛋黄芋泥盒子");
+
+  // 苔条年糕咸蛋黄卷
+  assert.equal(normalizeProductName("苔条年糕咸蛋黄卷"), "咸蛋黄苔条年糕卷");
+  assert.equal(normalizeProductName("咸蛋黄苔条年糕卷"), "咸蛋黄苔条年糕卷");
+  assert.equal(normalizeProductName("咸蛋黄苔条年糕蛋糕卷"), "咸蛋黄苔条年糕卷");
+
+  // 番茄生巧曲奇
+  assert.equal(normalizeProductName("番茄生巧烧椒酱曲奇"), "番茄生巧曲奇");
+  assert.equal(normalizeProductName("傣味番茄生巧曲奇"), "番茄生巧曲奇");
+  assert.equal(normalizeProductName("傣味番茄生巧曲奇159盒三个"), "番茄生巧曲奇");
+  assert.equal(normalizeProductName("番茄生巧曲奇"), "番茄生巧曲奇");
 
   // plain 芋泥盒子 must not merge with 咸蛋黄芋泥盒子
   assert.equal(normalizeProductName("芋泥奶酱盒子"), "芋泥盒子");
@@ -97,6 +110,7 @@ function testNormalization() {
   assert.equal(normalizeProductName("草莓杯"), "草莓杯");
   assert.equal(normalizeProductName("trifle"), "草莓杯");
   assert.equal(normalizeProductName("咸蛋黄巴斯克"), "咸蛋黄巴斯克");
+  assert.equal(normalizeProductName("芋泥麻薯巴斯克"), "咸蛋黄巴斯克");
   assert.equal(normalizeProductName("开心果巴斯克"), "开心果巴斯克");
 
   // 甜卷不应被归入香葱卷
@@ -113,7 +127,9 @@ function testNormalization() {
   assert.equal(productMatchesQuery("桂花酒酿盒子", ["酒酿盒子"], "酒酿盒子"), true);
   assert.equal(productMatchesQuery("榛果泡芙", ["榛子泡芙"], "榛子泡芙"), true);
   assert.equal(productMatchesQuery("达克瓦滋", ["柚子达克瓦滋"], "柚子"), true);
-  assert.equal(productMatchesQuery("蛋糕盲盒", ["满50可选蛋糕盲盒"], "满50"), true);
+  assert.equal(productMatchesQuery("榛果泡芙", ["百香果焦糖榛果泡芙"], "百香果"), true);
+  assert.equal(productMatchesQuery("番茄生巧曲奇", ["傣味番茄生巧曲奇"], "傣味"), true);
+  assert.equal(productMatchesQuery("咸蛋黄苔条年糕卷", ["苔条年糕咸蛋黄卷"], "苔条"), true);
 }
 
 function testAggregation() {

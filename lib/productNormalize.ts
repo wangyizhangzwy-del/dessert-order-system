@@ -32,11 +32,16 @@ function isCakeBlindBox(name: string): boolean {
   return false;
 }
 
-/** 咸蛋黄 + 芋泥 + 盒子/奶酱 → 咸蛋黄芋泥盒子（优先于普通芋泥盒子）。 */
+/** 咸蛋黄 + 盒子/奶酱（含芋泥/麻薯/蛋糕盒/酱多多）→ 咸蛋黄芋泥盒子。 */
 function isXianhuangniYuniBox(name: string): boolean {
-  if (!/芋泥/.test(name)) return false;
   if (!/咸蛋黄/.test(name)) return false;
-  return /(盒子|奶酱)/.test(name) || /酱多多/.test(name);
+  if (!/(盒子|奶酱)/.test(name) && !/酱多多/.test(name)) return false;
+  if (/芋泥/.test(name)) return true;
+  if (/麻薯/.test(name)) return true;
+  if (/奶酱/.test(name)) return true;
+  if (/蛋糕/.test(name) && /盒/.test(name)) return true;
+  if (/酱多多/.test(name)) return true;
+  return /咸蛋黄/.test(name) && /盒子/.test(name);
 }
 
 /** 酒酿 / 桂花酒酿 家族。 */
@@ -62,6 +67,12 @@ function isYuniBoxFamily(name: string): boolean {
   return false;
 }
 
+/** 番茄 + 生巧 + 曲奇（含 159盒三个 bundle 后缀）。 */
+function isTomatoChocolateCookie(name: string): boolean {
+  const core = name.replace(/159盒[三3]个$/, "");
+  return /番茄/.test(core) && /生巧/.test(core) && /曲奇/.test(core);
+}
+
 /** 凤梨 / 菠萝 / 话梅 / 铁观音 卷家族。 */
 function isFengliHuameiRollFamily(name: string): boolean {
   if (name === "凤梨卷" || name === "菠萝卷") return true;
@@ -72,19 +83,34 @@ function isFengliHuameiRollFamily(name: string): boolean {
   return false;
 }
 
-/** 达克瓦滋及历史 bundle 写法。 */
+/** 咸蛋黄 + 苔条 + 年糕 + 卷。 */
+function isXianhuangniTaitiaoRoll(name: string): boolean {
+  if (!/咸蛋黄/.test(name)) return false;
+  if (!/苔条/.test(name)) return false;
+  if (!/年糕/.test(name)) return false;
+  return /卷/.test(name);
+}
+
+/** 达克瓦滋及 standalone 历史 bundle 写法（非番茄曲奇后缀）。 */
 function isDakowazFamily(name: string): boolean {
   if (/达克瓦[兹滋]/.test(name)) return true;
   if (/^159盒[三3]个$/.test(name)) return true;
-  if (/^159盒三个$/.test(name)) return true;
   return false;
 }
 
-/** savory 香葱卷 / 酱多多卷 / 肉松卷 家族（排除甜卷与凤梨卷）。 */
+/** 榛果/榛子泡芙（优先于焦糖泡芙，含百香果/海盐焦糖榛果变体）。 */
+function isHazelnutPuff(name: string): boolean {
+  return /榛(果|子)/.test(name) && /泡芙/.test(name);
+}
+
+/** savory 香葱卷 / 酱多多卷 / 肉松卷 家族（排除甜卷与凤梨卷、苔条卷）。 */
 function isSavoryRollFamily(name: string): boolean {
   if (isFengliHuameiRollFamily(name)) return false;
+  if (isXianhuangniTaitiaoRoll(name)) return false;
   if (!/卷/.test(name)) return false;
-  if (/抹茶|焙茶|玄米|黑芝麻|香梨|杏子|红薯/.test(name) && !/香葱/.test(name)) return false;
+  if (/抹茶|焙茶|玄米|黑芝麻|香梨|杏子|红薯|苔条|年糕/.test(name) && !/香葱/.test(name)) {
+    return false;
+  }
   if (/香葱卷/.test(name)) return true;
   if (/酱多多/.test(name) && /卷/.test(name)) return true;
   if (/肉松/.test(name) && /卷/.test(name)) return true;
@@ -103,9 +129,13 @@ export function normalizeProductName(raw: string | undefined | null): string {
   if (isGuihuaJiuniangFamily(name)) return "桂花酒酿盒子";
   if (isYuniBoxFamily(name)) return "芋泥盒子";
 
+  if (isTomatoChocolateCookie(name)) return "番茄生巧曲奇";
+
   if (isDakowazFamily(name)) return "达克瓦滋";
 
   if (isFengliHuameiRollFamily(name)) return "凤梨话梅铁观音卷";
+
+  if (isXianhuangniTaitiaoRoll(name)) return "咸蛋黄苔条年糕卷";
 
   if (/雪花酥/.test(name)) {
     if (/咸蛋黄/.test(name)) return "咸蛋黄雪花酥";
@@ -113,13 +143,15 @@ export function normalizeProductName(raw: string | undefined | null): string {
   }
 
   if (/巴斯克/.test(name)) {
+    if (/芋泥麻薯/.test(name)) return "咸蛋黄巴斯克";
     if (/开心果/.test(name)) return "开心果巴斯克";
     if (/咸蛋黄/.test(name)) return "咸蛋黄巴斯克";
     if (/黑松露/.test(name)) return "黑松露巴斯克";
-    if (/芋泥麻薯/.test(name)) return "芋泥麻薯巴斯克";
     if (/抹茶/.test(name)) return "抹茶巴斯克";
     return name.includes("巴斯克") ? name : "巴斯克";
   }
+
+  if (isHazelnutPuff(name)) return "榛果泡芙";
 
   if (/焦糖/.test(name) && /(泡芙|小泡芙|脆壳)/.test(name)) return "焦糖泡芙";
   if (/小贝|奶贝/.test(name)) return "肉松小贝";
@@ -129,8 +161,6 @@ export function normalizeProductName(raw: string | undefined | null): string {
   if (/草莓杯|trifle|草莓trifle/i.test(name)) return "草莓杯";
   if (/草莓/.test(name) && /(切块|蛋糕)/.test(name)) return "草莓蛋糕";
   if (name === "切块" || name === "草莓切块") return "草莓蛋糕";
-
-  if (/榛(果|子)/.test(name) && /泡芙/.test(name)) return "榛果泡芙";
 
   if (/泰奶/.test(name) && /泡芙/.test(name)) return "泰奶泡芙";
   if (/泰奶/.test(name)) return "泰奶泡芙";
