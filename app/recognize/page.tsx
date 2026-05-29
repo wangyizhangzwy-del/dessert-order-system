@@ -2,9 +2,9 @@
 
 import { MouseEvent, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { parseWechatRelay } from "@/lib/parser";
-import Link from "next/link";
 import {
   clearDraft,
+  deleteJielong,
   getSavedJielongById,
   isCloudBackend,
   saveDraft,
@@ -35,6 +35,7 @@ interface EditableRow {
   status: RowStatus;
   warning_reason: string;
   is_example: boolean;
+  production_status: string;
 }
 
 interface CustomerSummaryRow {
@@ -64,6 +65,7 @@ interface GroupedExcelRow {
   notes: string;
   delivery_status: string;
   payment_status: string;
+  production_status: string;
 }
 
 interface CustomerFlags {
@@ -141,6 +143,7 @@ function toRows(orders: ParsedOrder[]): EditableRow[] {
         status: order.status,
         warning_reason: order.warning_reason ?? "",
         is_example: isExample,
+        production_status: "未制作",
       });
       sequence += 1;
       continue;
@@ -163,6 +166,7 @@ function toRows(orders: ParsedOrder[]): EditableRow[] {
         status: order.status,
         warning_reason: order.warning_reason ?? "",
         is_example: isExample,
+        production_status: "未制作",
       });
       sequence += 1;
     }
@@ -221,6 +225,12 @@ function RecognizePageInner() {
   const [failedJumpIdx, setFailedJumpIdx] = useState(0);
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
   const [mounted, setMounted] = useState(false);
+  const [customerNotesEdits, setCustomerNotesEdits] = useState<Record<string, string>>({});
+  const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [autosaveError, setAutosaveError] = useState("");
+  const skipAutosaveRef = useRef(true);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isExistingBatch = Boolean(editingBatchId && currentBatchId);
 
   useEffect(() => {
     setMounted(true);
@@ -234,7 +244,11 @@ function RecognizePageInner() {
       if (!active || !saved) return;
       setRawText(saved.raw_text ?? "");
       setOrderDate(saved.order_date ?? "5.28");
-      setRows((saved.editable_rows as EditableRow[]) ?? []);
+      const loadedRows = ((saved.editable_rows as EditableRow[]) ?? []).map((r) => ({
+        ...r,
+        production_status: r.production_status ?? "未制作",
+      }));
+      setRows(loadedRows);
       setMenuItems(saved.menu_items ?? []);
       setBatchName(saved.batch_name ?? `接龙-${new Date().toLocaleString()}`);
       setCurrentBatchId(saved.batch_id);
@@ -247,6 +261,12 @@ function RecognizePageInner() {
         };
       });
       setCustomerFlags(flags);
+      const notesEdits: Record<string, string> = {};
+      saved.customer_summary_rows?.forEach((c) => {
+        if (c.notes) notesEdits[c.wechat_id] = c.notes;
+      });
+      setCustomerNotesEdits(notesEdits);
+      skipAutosaveRef.current = true;
       setMessage("已加载历史接龙，可继续编辑");
     })();
     return () => {
@@ -340,9 +360,29 @@ function RecognizePageInner() {
           if (a.key.group !== b.key.group) return a.key.group.localeCompare(b.key.group, "zh-Hans-CN");
           return a.idx - b.idx;
         })
-        .map((x) => x.row),
-    [customerSummary]
+        .map((x) => ({
+          ...x.row,
+          notes: customerNotesEdits[x.row.wechat_id] ?? x.row.notes,
+        })),
+    [customerSummary, customerNotesEdits]
   );
+
+  const getCustomerNotes = (wechatId: string, fallback: string) =>
+    customerNotesEdits[wechatId] ?? fallback;
+
+  const orderRecordEntries = useMemo(() => {
+    const entries: { row: EditableRow; isFirst: boolean; customerTotal: number; wechatId: string }[] = [];
+    for (const customer of customerSummary) {
+      const wechatId = customer.wechat_id;
+      const customerRows = effectiveRows.filter(
+        (r) => (r.wechat_id.trim() || "未填写微信号") === wechatId
+      );
+      customerRows.forEach((row, idx) => {
+        entries.push({ row, isFirst: idx === 0, customerTotal: customer.customer_total, wechatId });
+      });
+    }
+    return entries;
+  }, [effectiveRows, customerSummary]);
 
   const productionSummary = useMemo(() => {
     const map = new Map<string, ProductionSummaryRow>();
@@ -443,6 +483,7 @@ function RecognizePageInner() {
         status: "success",
         warning_reason: "",
         is_example: false,
+        production_status: "未制作",
       },
     ]);
   };
@@ -496,19 +537,24 @@ function RecognizePageInner() {
   const buildGroupedExcelRows = (): GroupedExcelRow[] => {
     const output: GroupedExcelRow[] = [];
     for (const customer of customerSummary) {
-      const customerRows = effectiveRows.filter((r) => r.wechat_id === customer.wechat_id);
-      const flags = customerFlags[customer.wechat_id] ?? { delivered: false, paid: false };
+      const wechatId = customer.wechat_id;
+      const customerRows = effectiveRows.filter(
+        (r) => (r.wechat_id.trim() || "未填写微信号") === wechatId
+      );
+      const flags = customerFlags[wechatId] ?? { delivered: false, paid: false };
+      const notes = getCustomerNotes(wechatId, customer.notes);
       customerRows.forEach((row, idx) => {
         output.push({
           date: idx === 0 ? orderDate : "",
-          customer: idx === 0 ? customer.wechat_id : "",
+          customer: idx === 0 ? wechatId : "",
           product: getShortProductName(row),
           quantity: String(row.quantity),
           unit_price: formatPrice(row.unit_price),
           customer_total: idx === 0 ? formatMoney(customer.customer_total) : "",
-          notes: idx === 0 ? compactNotes(customer.notes) : "",
+          notes: idx === 0 ? compactNotes(notes) : "",
           delivery_status: idx === 0 ? (flags.delivered ? "已送达" : "未送达") : "",
           payment_status: idx === 0 ? (flags.paid ? "已付款" : "未付款") : "",
+          production_status: row.production_status || "未制作",
         });
       });
       output.push({
@@ -521,6 +567,7 @@ function RecognizePageInner() {
         notes: "",
         delivery_status: "",
         payment_status: "",
+        production_status: "",
       });
     }
     return output;
@@ -528,7 +575,7 @@ function RecognizePageInner() {
 
   const toGroupedExcelTSV = (): string => {
     const table = [
-      ["日期", "客户", "商品", "数量", "单价", "总金额", "备注", "配送状态", "付款状态"],
+      ["日期", "客户", "商品", "数量", "单价", "总金额", "备注", "配送状态", "付款状态", "制作状态"],
       ...buildGroupedExcelRows().map((r) => [
         r.date,
         r.customer,
@@ -539,6 +586,7 @@ function RecognizePageInner() {
         r.notes,
         r.delivery_status,
         r.payment_status,
+        r.production_status,
       ]),
     ];
     return toTsv(table);
@@ -592,45 +640,57 @@ function RecognizePageInner() {
     }
   };
 
+  const persistBatch = async (isAutosave: boolean) => {
+    const orders = buildCurrentOrders();
+    await saveDraft({ raw_text: rawText, menu_items: menuItems, orders });
+    const summaryRows = customerSummary.map((c) => ({
+      ...c,
+      notes: getCustomerNotes(c.wechat_id, c.notes),
+    }));
+    const groupedRows = buildGroupedExcelRows();
+    const batchId = currentBatchId ?? `batch_${Date.now()}`;
+    const payload = {
+      batch_id: batchId,
+      batch_name: batchName,
+      order_date: orderDate,
+      raw_text: rawText,
+      menu_items: menuItems,
+      parsed_orders: orders,
+      editable_rows: normalizedRows,
+      customer_summary_rows: summaryRows,
+      production_summary_rows: productionSummary.map((r) => ({
+        key: r.key,
+        sku_code: r.sku_code,
+        variant: r.variant,
+        cake_name: r.cake_name,
+        display_name: r.display_name,
+        total_quantity: r.total_quantity,
+      })),
+      grouped_excel_rows: groupedRows,
+      total_amount: totalSales,
+      warning_count: warningCount,
+      failed_count: failedCount,
+      ignore_example_order: IGNORE_LUMI_EXAMPLE_ORDER,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const saved = await saveJielong(payload);
+    setCurrentBatchId(saved.batch_id);
+    if (!isAutosave) {
+      router.replace(`/recognize?batch_id=${saved.batch_id}`);
+    }
+    return saved;
+  };
+
   const saveBatch = async () => {
     try {
-      const orders = buildCurrentOrders();
-      await saveDraft({ raw_text: rawText, menu_items: menuItems, orders });
-      const groupedRows = buildGroupedExcelRows();
-      const batchId = currentBatchId ?? `batch_${Date.now()}`;
-      const payload = {
-        batch_id: batchId,
-        batch_name: batchName,
-        order_date: orderDate,
-        raw_text: rawText,
-        menu_items: menuItems,
-        parsed_orders: orders,
-        editable_rows: normalizedRows,
-        customer_summary_rows: customerSummary,
-        production_summary_rows: productionSummary.map((r) => ({
-          key: r.key,
-          sku_code: r.sku_code,
-          variant: r.variant,
-          cake_name: r.cake_name,
-          display_name: r.display_name,
-          total_quantity: r.total_quantity,
-        })),
-        grouped_excel_rows: groupedRows,
-        total_amount: totalSales,
-        warning_count: warningCount,
-        failed_count: failedCount,
-        ignore_example_order: IGNORE_LUMI_EXAMPLE_ORDER,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      const saved = await saveJielong(payload);
-      setCurrentBatchId(saved.batch_id);
-      router.replace(`/recognize?batch_id=${saved.batch_id}`);
+      await persistBatch(false);
       setMessage(
         isCloudBackend()
           ? "已保存到云端 Supabase（可在历史接龙继续编辑）"
           : "已保存到本机（可在历史接龙继续编辑）"
       );
+      setAutosaveStatus("saved");
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
       setMessage(
@@ -641,20 +701,18 @@ function RecognizePageInner() {
     }
   };
 
-  const clearCurrentBatch = () => {
-    if (!window.confirm("确定删除本次接龙？将清空当前输入和识别结果（不影响已保存的历史接龙）。")) {
-      return;
+  const deleteHistoricalBatch = async () => {
+    if (!currentBatchId) return;
+    if (!window.confirm("确定删除此历史接龙？删除后无法恢复。")) return;
+    try {
+      await deleteJielong(currentBatchId);
+      await clearDraft();
+      setMessage("已删除此历史接龙");
+      router.push("/batches");
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      setMessage(`删除失败：${detail}`);
     }
-    setRawText("");
-    setRows([]);
-    setMenuItems([]);
-    setCustomerFlags({});
-    setOrderDate("5.28");
-    setBatchName(`接龙-${new Date().toLocaleString()}`);
-    setCurrentBatchId(null);
-    clearDraft().catch(() => {});
-    setMessage("已清空本次接龙");
-    router.replace("/recognize");
   };
 
   const updateCustomerFlag = (wechatId: string, key: keyof CustomerFlags, value: boolean) => {
@@ -667,6 +725,49 @@ function RecognizePageInner() {
       },
     }));
   };
+
+  const updateCustomerNotes = (wechatId: string, notes: string) => {
+    setCustomerNotesEdits((prev) => ({ ...prev, [wechatId]: notes }));
+    setRows((prev) =>
+      prev.map((r) =>
+        (r.wechat_id.trim() || "未填写微信号") === wechatId ? { ...r, notes } : r
+      )
+    );
+  };
+
+  // 历史接龙打开后，编辑内容 debounce 自动保存到 Supabase/local。
+  useEffect(() => {
+    if (!isExistingBatch || rows.length === 0) return;
+    if (skipAutosaveRef.current) {
+      skipAutosaveRef.current = false;
+      return;
+    }
+    setAutosaveStatus("saving");
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(async () => {
+      try {
+        await persistBatch(true);
+        setAutosaveStatus("saved");
+        setAutosaveError("");
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e);
+        setAutosaveStatus("error");
+        setAutosaveError(detail);
+      }
+    }, 1500);
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, [
+    rows,
+    customerFlags,
+    customerNotesEdits,
+    rawText,
+    orderDate,
+    batchName,
+    menuItems,
+    isExistingBatch,
+  ]);
 
   const onAnyButtonClick = (event: MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
@@ -720,15 +821,9 @@ function RecognizePageInner() {
             onChange={(e) => setOrderDate(e.target.value)}
             placeholder="如 5.28"
           />
-          <button
-            onClick={copyGroupedExcel}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white"
-          >
-            复制订单记录表到 Excel
-          </button>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <h2 className="text-lg font-semibold">订单明细可编辑表格</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold">订单记录表</h2>
           <button
             disabled={warningRows.length === 0}
             onClick={() => {
@@ -759,28 +854,33 @@ function RecognizePageInner() {
           >
             {tableExpanded ? "缩小到3行" : "完全展开"}
           </button>
-          <button onClick={addRow} className="rounded bg-zinc-200 px-3 py-2 text-sm">新增明细行</button>
+          <button onClick={addRow} className="rounded bg-zinc-200 px-3 py-2 text-sm text-zinc-700">
+            添加一行
+          </button>
+          <button
+            onClick={copyGroupedExcel}
+            className="rounded bg-zinc-200 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-300"
+          >
+            复制订单记录
+          </button>
         </div>
         <div
           className={`mt-3 overflow-x-auto overflow-y-auto border rounded ${
-            tableExpanded ? "max-h-none" : "max-h-[230px]"
+            tableExpanded ? "max-h-none" : "max-h-[420px]"
           }`}
         >
-          <table className="min-w-[1500px] border-collapse text-sm">
+          <table className="w-full table-fixed border-collapse text-xs">
             <thead>
-              <tr>
-                {["序号", "raw_line", "wechat_id", "sku_code", "variant", "flavor_combo", "cake_name", "display_name", "quantity", "unit_price", "line_total", "notes", "status", "warning_reason", "操作"].map((h) => (
-                  <th
-                    key={h}
-                    className="sticky top-0 z-10 border bg-zinc-100 px-2 py-2 text-left"
-                  >
+              <tr className="bg-zinc-100">
+                {["日期", "客户", "商品", "数量", "单价", "总金额", "备注", "配送", "付款", "制作状态", "操作"].map((h) => (
+                  <th key={h} className="sticky top-0 z-10 border bg-zinc-100 px-1 py-2 text-left font-medium">
                     {h}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {normalizedRows.map((row) => (
+              {orderRecordEntries.map(({ row, isFirst, customerTotal, wechatId }) => (
                 <tr
                   key={row.row_id}
                   ref={(el) => {
@@ -790,78 +890,78 @@ function RecognizePageInner() {
                     highlightRowId === row.row_id
                       ? "ring-2 ring-indigo-400"
                       : row.is_example
-                      ? "bg-blue-50"
-                      : row.status === "failed"
-                      ? "bg-red-50"
-                      : row.status === "warning"
-                        ? "bg-amber-50"
-                        : "bg-white"
+                        ? "bg-blue-50"
+                        : row.status === "failed"
+                          ? "bg-red-50"
+                          : row.status === "warning"
+                            ? "bg-amber-50"
+                            : "bg-white"
                   }
                 >
-                  <td className="border px-2 py-1">{row.sequence}</td>
-                  <td className="border px-2 py-1"><input className="w-56 rounded border p-1" value={row.raw_line} onChange={(e) => updateRow(row.row_id, "raw_line", e.target.value)} /></td>
-                  <td className="border px-2 py-1"><input className="w-36 rounded border p-1" value={row.wechat_id} onChange={(e) => updateRow(row.row_id, "wechat_id", e.target.value)} /></td>
-                  <td className="border px-2 py-1"><input className="w-20 rounded border p-1" value={row.sku_code} onChange={(e) => updateRow(row.row_id, "sku_code", e.target.value)} /></td>
-                  <td className="border px-2 py-1"><input className="w-20 rounded border p-1" value={row.variant} onChange={(e) => updateRow(row.row_id, "variant", e.target.value)} /></td>
-                  <td className="border px-2 py-1"><input className="w-44 rounded border p-1" value={row.flavor_combo} onChange={(e) => updateRow(row.row_id, "flavor_combo", e.target.value)} placeholder="口味组合" /></td>
-                  <td className="border px-2 py-1"><input className="w-44 rounded border p-1" value={row.cake_name} onChange={(e) => updateRow(row.row_id, "cake_name", e.target.value)} /></td>
-                  <td className="border px-2 py-1"><input className="w-44 rounded border p-1" value={row.display_name} onChange={(e) => updateRow(row.row_id, "display_name", e.target.value)} /></td>
-                  <td className="border px-2 py-1"><input type="number" className="w-20 rounded border p-1" value={row.quantity} onChange={(e) => updateRow(row.row_id, "quantity", Number(e.target.value || 0))} /></td>
-                  <td className="border px-2 py-1"><input type="number" step="0.01" className="w-24 rounded border p-1" value={row.unit_price} onChange={(e) => updateRow(row.row_id, "unit_price", Number(e.target.value || 0))} /></td>
-                  <td className="border px-2 py-1">{formatMoney(row.line_total)}</td>
-                  <td className="border px-2 py-1"><input className="w-28 rounded border p-1" value={row.notes} onChange={(e) => updateRow(row.row_id, "notes", e.target.value)} /></td>
-                  <td className="border px-2 py-1">
-                    {row.is_example ? (
-                      <span className="rounded bg-blue-100 px-2 py-1 text-xs text-blue-700">example</span>
-                    ) : (
-                      <select className="rounded border p-1" value={row.status} onChange={(e) => updateRow(row.row_id, "status", e.target.value as RowStatus)}>
-                      <option value="success">success</option>
-                      <option value="warning">warning</option>
-                      <option value="failed">failed</option>
-                      </select>
-                    )}
+                  <td className="border px-1 py-1 w-[3.5rem]">
+                    {isFirst ? (
+                      <input
+                        className="w-full rounded border p-0.5 text-xs"
+                        value={orderDate}
+                        onChange={(e) => setOrderDate(e.target.value)}
+                      />
+                    ) : null}
                   </td>
-                  <td className="border px-2 py-1"><input className="w-40 rounded border p-1" value={row.warning_reason} onChange={(e) => updateRow(row.row_id, "warning_reason", e.target.value)} /></td>
-                  <td className="border px-2 py-1">
-                    <button onClick={() => deleteRow(row.row_id)} className="rounded bg-red-100 px-2 py-1 text-xs text-red-700">删除</button>
+                  <td className="border px-1 py-1 w-[5rem]">
+                    {isFirst ? (
+                      <input
+                        className="w-full rounded border p-0.5 text-xs"
+                        value={row.wechat_id}
+                        onChange={(e) => updateRow(row.row_id, "wechat_id", e.target.value)}
+                      />
+                    ) : null}
                   </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="rounded-xl bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-semibold">订单记录表预览</h2>
-        <div className="mt-3 overflow-x-auto">
-          <table className="min-w-[1100px] border-collapse text-sm">
-            <thead>
-              <tr className="bg-zinc-100">
-                {["日期", "客户", "商品", "数量", "单价", "总金额", "备注", "配送状态", "付款状态"].map((h) => (
-                  <th key={h} className="border px-2 py-2 text-left">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {buildGroupedExcelRows().map((row, idx) => (
-                <tr key={`grouped_${idx}`}>
-                  <td className="border px-2 py-1">{row.date}</td>
-                  <td className="border px-2 py-1">{row.customer}</td>
-                  <td className="border px-2 py-1">{row.product}</td>
-                  <td className="border px-2 py-1">{row.quantity}</td>
-                  <td className="border px-2 py-1">{row.unit_price}</td>
-                  <td className="border px-2 py-1">{row.customer_total}</td>
-                  <td className="border px-2 py-1">{row.notes}</td>
-                  <td className="border px-2 py-1">
-                    {row.customer ? (
+                  <td className="border px-1 py-1 w-[6.5rem]">
+                    <input
+                      className="w-full rounded border p-0.5 text-xs"
+                      value={row.display_name || getShortProductName(row)}
+                      onChange={(e) => updateRow(row.row_id, "display_name", e.target.value)}
+                      title={row.display_name || getShortProductName(row)}
+                    />
+                  </td>
+                  <td className="border px-1 py-1 w-[2.5rem]">
+                    <input
+                      type="number"
+                      className="w-full rounded border p-0.5 text-xs"
+                      value={row.quantity}
+                      onChange={(e) => updateRow(row.row_id, "quantity", Number(e.target.value || 0))}
+                    />
+                  </td>
+                  <td className="border px-1 py-1 w-[3rem]">
+                    <input
+                      type="number"
+                      step="0.01"
+                      className="w-full rounded border p-0.5 text-xs"
+                      value={row.unit_price}
+                      onChange={(e) => updateRow(row.row_id, "unit_price", Number(e.target.value || 0))}
+                    />
+                  </td>
+                  <td className="border px-1 py-1 w-[3.5rem]">
+                    {isFirst ? formatMoney(customerTotal) : ""}
+                  </td>
+                  <td className="border px-1 py-1 w-[4rem]">
+                    {isFirst ? (
+                      <input
+                        className="w-full rounded border p-0.5 text-xs"
+                        value={getCustomerNotes(wechatId, row.notes)}
+                        onChange={(e) => updateCustomerNotes(wechatId, e.target.value)}
+                      />
+                    ) : null}
+                  </td>
+                  <td className="border px-1 py-1 w-[4.5rem]">
+                    {isFirst ? (
                       <select
-                        className={deliveryStatusSelectClass(
-                          customerFlags[row.customer]?.delivered ?? false
-                        )}
-                        value={(customerFlags[row.customer]?.delivered ?? false) ? "已送达" : "未送达"}
+                        className={`w-full rounded border p-0.5 text-xs ${deliveryStatusSelectClass(
+                          customerFlags[wechatId]?.delivered ?? false
+                        )}`}
+                        value={(customerFlags[wechatId]?.delivered ?? false) ? "已送达" : "未送达"}
                         onChange={(e) =>
-                          updateCustomerFlag(row.customer, "delivered", e.target.value === "已送达")
+                          updateCustomerFlag(wechatId, "delivered", e.target.value === "已送达")
                         }
                       >
                         <option value="未送达">未送达</option>
@@ -869,18 +969,41 @@ function RecognizePageInner() {
                       </select>
                     ) : null}
                   </td>
-                  <td className="border px-2 py-1">
-                    {row.customer ? (
+                  <td className="border px-1 py-1 w-[4.5rem]">
+                    {isFirst ? (
                       <select
-                        className={paymentStatusSelectClass(customerFlags[row.customer]?.paid ?? false)}
-                        value={(customerFlags[row.customer]?.paid ?? false) ? "已付款" : "未付款"}
+                        className={`w-full rounded border p-0.5 text-xs ${paymentStatusSelectClass(
+                          customerFlags[wechatId]?.paid ?? false
+                        )}`}
+                        value={(customerFlags[wechatId]?.paid ?? false) ? "已付款" : "未付款"}
                         onChange={(e) =>
-                          updateCustomerFlag(row.customer, "paid", e.target.value === "已付款")
+                          updateCustomerFlag(wechatId, "paid", e.target.value === "已付款")
                         }
                       >
                         <option value="未付款">未付款</option>
                         <option value="已付款">已付款</option>
                       </select>
+                    ) : null}
+                  </td>
+                  <td className="border px-1 py-1 w-[4.5rem]">
+                    <select
+                      className="w-full rounded border p-0.5 text-xs"
+                      value={row.production_status || "未制作"}
+                      onChange={(e) => updateRow(row.row_id, "production_status", e.target.value)}
+                    >
+                      <option value="未制作">未制作</option>
+                      <option value="制作中">制作中</option>
+                      <option value="已制作">已制作</option>
+                    </select>
+                  </td>
+                  <td className="border px-1 py-1 w-[2.5rem]">
+                    {!row.is_example ? (
+                      <button
+                        onClick={() => deleteRow(row.row_id)}
+                        className="rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-600 hover:bg-zinc-200"
+                      >
+                        删
+                      </button>
                     ) : null}
                   </td>
                 </tr>
@@ -910,7 +1033,13 @@ function RecognizePageInner() {
                   <td className="border px-2 py-1">{row.wechat_id}</td>
                   <td className="border px-2 py-1">{row.items_summary}</td>
                   <td className="border px-2 py-1">{formatMoney(row.customer_total)}</td>
-                  <td className="border px-2 py-1">{row.notes}</td>
+                  <td className="border px-2 py-1">
+                    <input
+                      className="w-full min-w-[6rem] rounded border p-1 text-sm"
+                      value={row.notes}
+                      onChange={(e) => updateCustomerNotes(row.wechat_id, e.target.value)}
+                    />
+                  </td>
                   <td className="border px-2 py-1">{row.status}</td>
                 </tr>
               ))}
@@ -958,23 +1087,29 @@ function RecognizePageInner() {
         <p className="mt-2 text-sm">总销售额：<span className="font-semibold">{formatMoney(totalSales)}</span></p>
         <p className="text-sm">warning 数量：<span className="font-semibold text-amber-700">{warningCount}</span></p>
         <p className="text-sm">failed 数量：<span className="font-semibold text-red-700">{failedCount}</span></p>
-        <button onClick={saveBatch} className="mt-3 w-full rounded-lg bg-zinc-900 px-4 py-3 font-medium text-white">
-          保存本次接龙
-        </button>
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <button
-            onClick={clearCurrentBatch}
-            className="rounded-md bg-zinc-200 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-300"
-          >
-            删除本次接龙
+        {isExistingBatch ? (
+          <>
+            {autosaveStatus === "saving" ? (
+              <p className="mt-2 text-xs text-zinc-500">自动保存中...</p>
+            ) : null}
+            {autosaveStatus === "saved" ? (
+              <p className="mt-2 text-xs text-emerald-600">已自动保存</p>
+            ) : null}
+            {autosaveStatus === "error" ? (
+              <p className="mt-2 text-xs text-red-600">自动保存失败: {autosaveError}</p>
+            ) : null}
+            <button
+              onClick={deleteHistoricalBatch}
+              className="mt-3 rounded-md bg-zinc-200 px-4 py-2 text-sm text-zinc-700 hover:bg-zinc-300"
+            >
+              删除本次接龙
+            </button>
+          </>
+        ) : (
+          <button onClick={saveBatch} className="mt-3 w-full rounded-lg bg-zinc-900 px-4 py-3 font-medium text-white">
+            保存本次接龙
           </button>
-          <Link
-            href="/batches"
-            className="rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow hover:bg-indigo-700"
-          >
-            打开历史接龙
-          </Link>
-        </div>
+        )}
       </div>
     </div>
   );

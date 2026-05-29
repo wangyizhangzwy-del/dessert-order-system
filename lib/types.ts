@@ -91,6 +91,7 @@ export interface EditableOrderRow {
   status: ParseStatus;
   warning_reason: string;
   is_example: boolean;
+  production_status?: string;
 }
 
 export interface AppSettings {
@@ -144,6 +145,7 @@ export interface SavedJielong {
     notes: string;
     delivery_status: string;
     payment_status: string;
+    production_status?: string;
   }[];
   total_amount: number;
   warning_count: number;
