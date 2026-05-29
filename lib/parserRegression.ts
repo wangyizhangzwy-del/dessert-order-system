@@ -506,5 +506,72 @@ export function runParserRegressionChecks(): string[] {
     if (comboItems[0].quantity !== 1) errors.push(`组合盒分配：${id} 数量应为 1（一盒）`);
   }
 
+  const qtySuffixRelay = `${REGRESSION_RELAY_TEXT}
+23. 1Frank 1咸蛋黄*2
+24. Frank2 1咸蛋黄 x2
+25. Frank3 1咸蛋黄X2
+26. Frank4 1咸蛋黄×2
+27. multiA 咸蛋黄*2 原味小贝x1
+28. multiB 焦糖泡芙×2 泰奶泡芙*1`;
+
+  const qtyParsed = parseWechatRelay(qtySuffixRelay);
+
+  function assertQtyOrder(
+    wechatId: string,
+    expectedItems: { nameIncludes: string; quantity: number }[],
+    lineHint: string
+  ) {
+    const o = qtyParsed.orders.find((x) => x.wechat_id === wechatId);
+    if (!o) {
+      errors.push(`数量后缀：缺少客户 ${wechatId}（${lineHint}）`);
+      return;
+    }
+    if (o.status !== "success") {
+      errors.push(`数量后缀：${wechatId} 状态应为 success（${o.warning_reason ?? o.status}）`);
+    }
+    if (o.notes && /x\d+|\*\d+/i.test(o.notes)) {
+      errors.push(`数量后缀：${wechatId} notes 不应含数量后缀（${o.notes}）`);
+    }
+    for (const exp of expectedItems) {
+      const item = o.items.find((it) =>
+        (it.display_name || it.cake_name || "").includes(exp.nameIncludes)
+      );
+      if (!item) {
+        errors.push(`数量后缀：${wechatId} 缺少商品含 "${exp.nameIncludes}"（${lineHint}）`);
+        continue;
+      }
+      if (item.quantity !== exp.quantity) {
+        errors.push(
+          `数量后缀：${wechatId} ${exp.nameIncludes} 数量应为 ${exp.quantity}，实际 ${item.quantity}（${lineHint}）`
+        );
+      }
+      const label = item.display_name || item.cake_name || "";
+      if (/x\d+|\*\d+|×\d+/i.test(label)) {
+        errors.push(`数量后缀：${wechatId} 商品名不应含数量后缀（${label}）`);
+      }
+    }
+  }
+
+  assertQtyOrder("1Frank", [{ nameIncludes: "咸蛋黄", quantity: 2 }], "1咸蛋黄*2");
+  assertQtyOrder("Frank2", [{ nameIncludes: "咸蛋黄", quantity: 2 }], "1咸蛋黄 x2");
+  assertQtyOrder("Frank3", [{ nameIncludes: "咸蛋黄", quantity: 2 }], "1咸蛋黄X2");
+  assertQtyOrder("Frank4", [{ nameIncludes: "咸蛋黄", quantity: 2 }], "1咸蛋黄×2");
+  assertQtyOrder(
+    "multiA",
+    [
+      { nameIncludes: "咸蛋黄", quantity: 2 },
+      { nameIncludes: "原味", quantity: 1 },
+    ],
+    "咸蛋黄*2 原味小贝x1"
+  );
+  assertQtyOrder(
+    "multiB",
+    [
+      { nameIncludes: "焦糖", quantity: 2 },
+      { nameIncludes: "泰奶", quantity: 1 },
+    ],
+    "焦糖泡芙×2 泰奶泡芙*1"
+  );
+
   return errors;
 }

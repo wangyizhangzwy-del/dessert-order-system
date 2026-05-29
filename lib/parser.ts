@@ -46,6 +46,28 @@ function normalizeOrderPlusSymbols(input: string): string {
     .replace(/\s*x\s*/g, "x");
 }
 
+/** 商品数量后缀：咸蛋黄*2 / 咸蛋黄 x2 / 焦糖泡芙×2 → base + quantity（非 SKU 乘法 11x3）。 */
+export function parseProductQuantitySuffix(text: string): { base: string; quantity: number } {
+  const trimmed = text.trim();
+  if (!trimmed) return { base: trimmed, quantity: 1 };
+
+  const m = trimmed.match(/^(.+?)x(\d+)$/i);
+  if (m) {
+    const base = m[1].trim();
+    const qty = Number(m[2]);
+    if (base && qty > 0 && /[^\d\s]/.test(base)) {
+      return { base, quantity: qty };
+    }
+  }
+  return { base: trimmed, quantity: 1 };
+}
+
+function stripProductQuantitySuffix(token: string): { token: string; quantity: number } {
+  const normalized = normalizeOrderPlusSymbols(token.trim());
+  const { base, quantity } = parseProductQuantitySuffix(normalized);
+  return { token: base, quantity };
+}
+
 // 订单 SKU 区里，横杠（- – — －）位于两个数字之间时当作 +，例如 4-7 => 4+7。
 // 只对已确认为下单 token 的内容做转换，避免影响客户名与备注/地址里的横杠。
 function bridgeSkuHyphens(input: string): string {
@@ -501,6 +523,23 @@ function resolveSku1ShortVariant(token: string): string | null {
   return null;
 }
 
+function resolveSku1VariantToken(token: string): { variant: string; quantity: number } | null {
+  const { token: base, quantity } = stripProductQuantitySuffix(token);
+  const norm = normalizeText(base);
+  if (!norm) return null;
+
+  const short = SKU1_FLAVOR_SHORTNAMES[norm];
+  if (short) return { variant: short, quantity };
+
+  const fromResolver = resolveSku1ShortVariant(base);
+  if (fromResolver) return { variant: fromResolver, quantity };
+
+  const bareVariant = SKU1_VARIANT_NAMES.find((v) => normalizeText(v) === norm);
+  if (bareVariant) return { variant: bareVariant, quantity };
+
+  return null;
+}
+
 const SKU1_FLAVOR_ALTERNATION = "(?:芋泥奶贝|咸蛋黄|原味|芋泥|麻薯|奶贝)";
 
 // 把空格分隔的 SKU1 口味与数字 1 合并成一个 token：
@@ -639,28 +678,29 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
   const comboAcc = new Map<string, { menuItem: MenuItem; flavors: string[] }>();
 
   for (const part of parts) {
+    const sku1Resolved = resolveSku1VariantToken(part);
+    if (sku1Resolved) {
+      const sku1Item = menu.find((it) => it.sku_code === "1") ?? makeSku1MenuItem(menu);
+      const parsed = orderItemFromSku(sku1Item, sku1Resolved.quantity, sku1Resolved.variant);
+      if (parsed.item) allItems.push(parsed.item);
+      if (parsed.warning) warnings.push(parsed.warning);
+      continue;
+    }
+
     const m = part.match(/^(\d+)(.*)$/);
     if (!m) {
-      // SKU 1 口味短名：原味小贝 / 奶贝 / 芋泥奶贝小贝 ...
-      const sku1Variant = resolveSku1ShortVariant(part);
-      if (sku1Variant) {
-        const sku1Item = menu.find((it) => it.sku_code === "1") ?? makeSku1MenuItem(menu);
-        const parsed = orderItemFromSku(sku1Item, 1, sku1Variant);
-        if (parsed.item) allItems.push(parsed.item);
-        if (parsed.warning) warnings.push(parsed.warning);
-        continue;
-      }
       // 没有 SKU 数字前缀：按当前菜单做产品名 fuzzy match
-      if (hasCjk(part) && !isLikelyNoteText(part)) {
-        const matched = matchProductNameToMenuItem(part, menu);
+      const { token: namePart, quantity: nameQty } = stripProductQuantitySuffix(part);
+      if (hasCjk(namePart) && !isLikelyNoteText(namePart)) {
+        const matched = matchProductNameToMenuItem(namePart, menu);
         if (matched.item) {
-          const parsed = orderItemFromSku(matched.item, 1);
+          const parsed = orderItemFromSku(matched.item, nameQty);
           if (parsed.item) allItems.push(parsed.item);
           if (parsed.warning) warnings.push(parsed.warning);
           continue;
         }
         if (matched.ambiguous) {
-          warnings.push(`"${part}" 多个商品匹配，请人工确认`);
+          warnings.push(`"${namePart}" 多个商品匹配，请人工确认`);
           continue;
         }
       }
@@ -668,7 +708,10 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
       continue;
     }
     const n = Number(m[1]);
-    const tail = m[2].trim();
+    let tail = m[2].trim();
+    const tailQty = stripProductQuantitySuffix(tail);
+    tail = tailQty.token;
+    const itemQty = tailQty.quantity;
     const skuItem = menu.find((it) => it.sku_code === String(n)) ?? (n === 1 ? makeSku1MenuItem(menu) : undefined);
 
     if (!tail) {
@@ -676,14 +719,14 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
         warnings.push(`SKU ${n} 不存在`);
         continue;
       }
-      const parsed = orderItemFromSku(skuItem, 1);
+      const parsed = orderItemFromSku(skuItem, itemQty);
       if (parsed.item) allItems.push(parsed.item);
       if (parsed.warning) warnings.push(parsed.warning);
       continue;
     }
 
-    // 数量乘法：11x3 / 11*3 / 11×3 / 11＊3
-    const multiply = tail.match(/^x(\d+)$/);
+    // 数量乘法：11x3 / 11*3 / 11×3 / 11＊3（仅 tail 为 xN，不含商品名）
+    const multiply = tail.match(/^x(\d+)$/i);
     if (multiply) {
       if (!skuItem) {
         warnings.push(`SKU ${n} 不存在`);
@@ -700,10 +743,17 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
       const bracketVariants = splitSku1BracketVariants(tail);
       if (bracketVariants.length > 0) {
         bracketVariants.forEach((variantName) => {
-          const parsed = orderItemFromSku(skuItem, 1, variantName);
+          const parsed = orderItemFromSku(skuItem, itemQty, variantName);
           if (parsed.item) allItems.push(parsed.item);
           if (parsed.warning) warnings.push(parsed.warning);
         });
+        continue;
+      }
+      const sku1Tail = resolveSku1VariantToken(`${n}${tail}`);
+      if (sku1Tail) {
+        const parsed = orderItemFromSku(skuItem, sku1Tail.quantity, sku1Tail.variant);
+        if (parsed.item) allItems.push(parsed.item);
+        if (parsed.warning) warnings.push(parsed.warning);
         continue;
       }
     }
@@ -723,7 +773,7 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
 
     // 例：7自取 / 2FigueroaEight，尾巴是备注时保留商品并把尾巴交给 notes
     if (skuItem && isLikelyNoteText(tail)) {
-      const parsed = orderItemFromSku(skuItem, 1);
+      const parsed = orderItemFromSku(skuItem, itemQty);
       if (parsed.item) allItems.push(parsed.item);
       if (parsed.warning) warnings.push(parsed.warning);
       warnings.push(`__NOTE__${tail}`);
@@ -734,7 +784,7 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
       ? skuItem.variants?.some((v) => normalizeText(v.variant_name) === normalizeText(tail))
       : false;
     if (skuItem && isSingleVariant) {
-      const parsed = orderItemFromSku(skuItem, 1, tail);
+      const parsed = orderItemFromSku(skuItem, itemQty, tail);
       if (parsed.item) allItems.push(parsed.item);
       if (parsed.warning) warnings.push(parsed.warning);
       continue;
@@ -745,7 +795,7 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
       const extracted = extractVariantsFromText(tail, skuItem);
       if (extracted.length > 0) {
         extracted.forEach((variantName) => {
-          const parsed = orderItemFromSku(skuItem, 1, variantName);
+          const parsed = orderItemFromSku(skuItem, itemQty, variantName);
           if (parsed.item) allItems.push(parsed.item);
           if (parsed.warning) warnings.push(parsed.warning);
         });
@@ -755,7 +805,7 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
 
     const fuzzy = fuzzyFindMenuByKeyword(tail, menu);
     if (fuzzy.item) {
-      const parsed = orderItemFromSku(fuzzy.item, n);
+      const parsed = orderItemFromSku(fuzzy.item, itemQty);
       if (parsed.item) allItems.push(parsed.item);
       if (parsed.warning) warnings.push(parsed.warning);
       continue;
@@ -780,6 +830,10 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
   return { items: allItems, warnings };
 }
 
+function orderTokenBase(token: string): string {
+  return stripProductQuantitySuffix(normalizeOrderPlusSymbols(token)).token;
+}
+
 function parseSingleOrder(line: string, menu: MenuItem[]): ParsedOrder {
   const content = joinSku1FlavorNumber(line.replace(ORDER_LINE_RE, "").trim());
   const parts = content.split(/\s+/).filter(Boolean);
@@ -796,9 +850,11 @@ function parseSingleOrder(line: string, menu: MenuItem[]): ParsedOrder {
     if (mul) return Number(mul[1]) > 0 && Number(mul[1]) <= maxSku; // 2*2 / 11x3 数量乘法
     if (/^\d+$/.test(token)) return Number(token) > 0 && Number(token) <= maxSku;
     if (/^\d+[^\d\s]+$/.test(token)) return true; // 1芋泥, 8（抹茶/..）
-    if (resolveSku1ShortVariant(token)) return true; // 原味小贝 / 奶贝 ...
-    // 产品名直接点单：焙茶草莓达克瓦滋 / 焦糖小泡芙
-    if (hasCjk(token) && matchProductNameToMenuItem(token, menu).matched) return true;
+    if (resolveSku1VariantToken(token)) return true;
+    if (resolveSku1ShortVariant(orderTokenBase(token))) return true; // 原味小贝 / 奶贝 ...
+    // 产品名直接点单：焙茶草莓达克瓦滋 / 焦糖小泡芙 / 咸蛋黄x2
+    const productBase = orderTokenBase(token);
+    if (hasCjk(productBase) && matchProductNameToMenuItem(productBase, menu).matched) return true;
     return false;
   };
 
@@ -849,8 +905,10 @@ function parseSingleOrder(line: string, menu: MenuItem[]): ParsedOrder {
     if (token.includes("+")) return true;
     const mm = token.match(/^(\d+)(.*)$/);
     if (!mm) {
-      if (resolveSku1ShortVariant(token)) return true;
-      return hasCjk(token) && !isLikelyNoteText(token) && matchProductNameToMenuItem(token, menu).matched;
+      if (resolveSku1VariantToken(token)) return true;
+      const base = orderTokenBase(token);
+      if (resolveSku1ShortVariant(base)) return true;
+      return hasCjk(base) && !isLikelyNoteText(base) && matchProductNameToMenuItem(base, menu).matched;
     }
     const num = Number(mm[1]);
     const tail = mm[2].trim();
@@ -879,10 +937,19 @@ function parseSingleOrder(line: string, menu: MenuItem[]): ParsedOrder {
     }
 
     // 悬挂的数量乘法：把 "x3"（来自 "2 *3"）合并到前一个纯 SKU token，例如 "2"+"x3" => "2x3"
-    if (/^x\d+$/.test(p) && /^\d+$/.test(prev ?? "")) {
-      parseTokens[parseTokens.length - 1] = `${prev}${p}`;
-      hasParsedSkuHead = true;
-      continue;
+    // 或把 "x2" 合并到前一个商品 token，例如 "1咸蛋黄"+"x2" => "1咸蛋黄x2"
+    const normP = normalizeOrderPlusSymbols(p);
+    if (/^x\d+$/i.test(normP) && prev) {
+      if (/^\d+$/.test(prev)) {
+        parseTokens[parseTokens.length - 1] = `${prev}${normP}`;
+        hasParsedSkuHead = true;
+        continue;
+      }
+      if (/[\u4e00-\u9fff]/.test(prev)) {
+        parseTokens[parseTokens.length - 1] = `${prev}${normP}`;
+        hasParsedSkuHead = true;
+        continue;
+      }
     }
 
     // 支持：8 抹茶黑芝麻巧克力抹茶+4（把前一个 SKU token 和当前 token 拼接）
