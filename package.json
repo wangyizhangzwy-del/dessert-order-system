@@ -10,7 +10,9 @@
     "test:parser": "node --import tsx scripts/test-parser.ts",
     "test:analytics": "node --import tsx scripts/test-analytics.ts",
     "test:delivery": "node --import tsx scripts/test-delivery-mode.ts",
-    "test:date": "node --import tsx scripts/test-date-format.ts"
+    "test:date": "node --import tsx scripts/test-date-format.ts",
+    "test:february-import": "node --import tsx scripts/test-february-import.ts",
+    "import:february": "node --import tsx scripts/importFebruaryOrders.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.2",
