@@ -54,6 +54,14 @@ export async function rebuildCustomerProfiles(): Promise<{ updated: number }> {
   return { updated: res.updated ?? 0 };
 }
 
+export async function updateCustomerAddress(wechatId: string, default_address: string): Promise<Customer> {
+  const { customer } = await api<{ customer: Customer }>(
+    `/api/customers/${encodeURIComponent(wechatId)}`,
+    { method: "PUT", body: JSON.stringify({ default_address }) }
+  );
+  return customer;
+}
+
 export async function getSettings(): Promise<AppSettings> {
   const { settings } = await api<{ settings: AppSettings }>("/api/settings");
   return settings;

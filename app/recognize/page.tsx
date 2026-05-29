@@ -12,6 +12,19 @@ import {
   saveJielong,
 } from "@/lib/storage";
 import { IGNORE_LUMI_EXAMPLE_ORDER } from "@/lib/constants";
+import {
+  deliveryModeLabel,
+  DeliveryMode,
+  DeliveryModeState,
+  resolveDeliveryMode,
+} from "@/lib/deliveryMode";
+import {
+  chineseWeekday,
+  defaultOrderDateString,
+  formatDateWithWeekday,
+  generateBatchName,
+  isAutoBatchName,
+} from "@/lib/dateFormat";
 import { TEST_RELAY_TEXT } from "@/lib/testRelay";
 import { MenuItem, ParsedOrder } from "@/lib/types";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -73,13 +86,6 @@ interface CustomerFlags {
   paid: boolean;
 }
 
-type DeliveryMode = "default" | "pickup" | "custom";
-
-interface DeliveryModeState {
-  mode: DeliveryMode;
-  customText: string;
-}
-
 function roundMoney(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
@@ -112,23 +118,7 @@ function deliveryNoteKey(rawNotes: string): { category: number; group: string } 
   return { category: 0, group: core };
 }
 
-function inferDeliveryMode(notes: string, defaultAddr?: string): DeliveryModeState {
-  const n = (notes ?? "").trim();
-  if (n.includes("自取")) return { mode: "pickup", customText: "" };
-  if (n && defaultAddr && n === defaultAddr) return { mode: "default", customText: "" };
-  if (n) return { mode: "custom", customText: n };
-  if (defaultAddr) return { mode: "default", customText: "" };
-  return { mode: "default", customText: "" };
-}
-
-function deliveryModeLabel(state: DeliveryModeState, defaultAddr?: string): string {
-  if (state.mode === "pickup") return "自取";
-  if (state.mode === "custom") return state.customText.trim() || "自定义";
-  return defaultAddr?.trim() || "默认地址";
-}
-
-// 产品名一律使用本次菜单解析出的标准名（display_name / cake_name），不做永久硬编码映射。
-// 唯一例外：SKU 1 肉松小贝的口味短名。
+// 产品名一律使用本次菜单解析出的标准名
 function getShortProductName(row: EditableRow): string {
   if (row.sku_code.trim() === "1") {
     const variant = row.variant.trim();
@@ -234,13 +224,13 @@ function RecognizePageInner() {
   const searchParams = useSearchParams();
   const editingBatchId = searchParams.get("batch_id");
   const [rawText, setRawText] = useState("");
-  const [orderDate, setOrderDate] = useState("5.28");
+  const [orderDate, setOrderDate] = useState(defaultOrderDateString);
   const [message, setMessage] = useState("");
   const [rows, setRows] = useState<EditableRow[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [customerFlags, setCustomerFlags] = useState<Record<string, CustomerFlags>>({});
   const [tableExpanded, setTableExpanded] = useState(false);
-  const [batchName, setBatchName] = useState(`接龙-${new Date().toLocaleString()}`);
+  const [batchName, setBatchName] = useState(() => generateBatchName(defaultOrderDateString()));
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(editingBatchId ?? null);
   const [highlightRowId, setHighlightRowId] = useState<string>("");
   const [warningJumpIdx, setWarningJumpIdx] = useState(0);
@@ -250,6 +240,7 @@ function RecognizePageInner() {
   const [customerNotesEdits, setCustomerNotesEdits] = useState<Record<string, string>>({});
   const [customerAddresses, setCustomerAddresses] = useState<Record<string, string>>({});
   const [deliveryModes, setDeliveryModes] = useState<Record<string, DeliveryModeState>>({});
+  const [deliveryModeManual, setDeliveryModeManual] = useState<Record<string, boolean>>({});
   const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [autosaveError, setAutosaveError] = useState("");
   const skipAutosaveRef = useRef(true);
@@ -275,14 +266,14 @@ function RecognizePageInner() {
       const saved = await getSavedJielongById(editingBatchId);
       if (!active || !saved) return;
       setRawText(saved.raw_text ?? "");
-      setOrderDate(saved.order_date ?? "5.28");
+      setOrderDate(saved.order_date ?? defaultOrderDateString());
       const loadedRows = ((saved.editable_rows as EditableRow[]) ?? []).map((r) => ({
         ...r,
         production_status: r.production_status ?? "未制作",
       }));
       setRows(loadedRows);
       setMenuItems(saved.menu_items ?? []);
-      setBatchName(saved.batch_name ?? `接龙-${new Date().toLocaleString()}`);
+      setBatchName(saved.batch_name ?? generateBatchName(saved.order_date ?? defaultOrderDateString()));
       setCurrentBatchId(saved.batch_id);
       const flags: Record<string, CustomerFlags> = {};
       saved.grouped_excel_rows?.forEach((r) => {
@@ -295,6 +286,7 @@ function RecognizePageInner() {
       setCustomerFlags(flags);
       const notesEdits: Record<string, string> = {};
       const modes: Record<string, DeliveryModeState> = {};
+      const manual: Record<string, boolean> = {};
       saved.customer_summary_rows?.forEach((c) => {
         if (c.notes) notesEdits[c.wechat_id] = c.notes;
         if (c.delivery_mode) {
@@ -302,21 +294,12 @@ function RecognizePageInner() {
             mode: c.delivery_mode,
             customText: c.delivery_custom ?? "",
           };
+          manual[c.wechat_id] = true;
         }
       });
       setCustomerNotesEdits(notesEdits);
-      setDeliveryModes((prev) => {
-        const next = { ...prev, ...modes };
-        saved.customer_summary_rows?.forEach((c) => {
-          if (!next[c.wechat_id]) {
-            next[c.wechat_id] = inferDeliveryMode(
-              notesEdits[c.wechat_id] ?? c.notes,
-              undefined
-            );
-          }
-        });
-        return next;
-      });
+      setDeliveryModes(modes);
+      setDeliveryModeManual(manual);
       skipAutosaveRef.current = true;
       setMessage("已加载历史接龙，可继续编辑");
     })();
@@ -343,6 +326,9 @@ function RecognizePageInner() {
         });
         return flags;
       });
+      setCustomerNotesEdits({});
+      setDeliveryModes({});
+      setDeliveryModeManual({});
       setMessage(`识别完成：${parsed.orders.length} 行，warning ${parsed.warning_count}，failed ${parsed.failed_count}`);
     } catch {
       setRows([]);
@@ -420,6 +406,19 @@ function RecognizePageInner() {
 
   const getCustomerNotes = (wechatId: string, fallback: string) =>
     customerNotesEdits[wechatId] ?? fallback;
+
+  const getDeliveryModeForCustomer = (wechatId: string, notes: string): DeliveryModeState =>
+    deliveryModes[wechatId] ??
+    resolveDeliveryMode(notes, customerAddresses[wechatId]);
+
+  const refreshCustomerAddresses = async () => {
+    const customers = await getCustomers();
+    const addrMap: Record<string, string> = {};
+    for (const c of customers) {
+      if (c.default_address) addrMap[c.wechat_id] = c.default_address;
+    }
+    setCustomerAddresses(addrMap);
+  };
 
   const orderRecordEntries = useMemo(() => {
     const entries: { row: EditableRow; isFirst: boolean; customerTotal: number; wechatId: string }[] = [];
@@ -592,7 +591,7 @@ function RecognizePageInner() {
       const notes = getCustomerNotes(wechatId, customer.notes);
       customerRows.forEach((row, idx) => {
         output.push({
-          date: idx === 0 ? orderDate : "",
+          date: idx === 0 ? formatDateWithWeekday(orderDate) : "",
           customer: idx === 0 ? wechatId : "",
           product: getShortProductName(row),
           quantity: String(row.quantity),
@@ -647,7 +646,7 @@ function RecognizePageInner() {
         c.items_summary,
         formatMoney(c.customer_total),
         deliveryModeLabel(
-          deliveryModes[c.wechat_id] ?? inferDeliveryMode(c.notes, customerAddresses[c.wechat_id]),
+          getDeliveryModeForCustomer(c.wechat_id, c.notes),
           customerAddresses[c.wechat_id]
         ),
       ]),
@@ -689,11 +688,21 @@ function RecognizePageInner() {
     }
   };
 
+  const orderDateWeekday = chineseWeekday(orderDate);
+
+  const handleOrderDateChange = (value: string) => {
+    setOrderDate(value);
+    setBatchName((prev) => (isAutoBatchName(prev) ? generateBatchName(value) : prev));
+  };
+
   const persistBatch = async (isAutosave: boolean) => {
     const orders = buildCurrentOrders();
     await saveDraft({ raw_text: rawText, menu_items: menuItems, orders });
     const summaryRows = customerSummary.map((c) => {
-      const dm = deliveryModes[c.wechat_id] ?? inferDeliveryMode(getCustomerNotes(c.wechat_id, c.notes), customerAddresses[c.wechat_id]);
+      const dm = getDeliveryModeForCustomer(
+        c.wechat_id,
+        getCustomerNotes(c.wechat_id, c.notes)
+      );
       return {
         ...c,
         notes: getCustomerNotes(c.wechat_id, c.notes),
@@ -703,9 +712,11 @@ function RecognizePageInner() {
     });
     const groupedRows = buildGroupedExcelRows();
     const batchId = currentBatchId ?? `batch_${Date.now()}`;
+    const resolvedBatchName = isAutoBatchName(batchName) ? generateBatchName(orderDate) : batchName;
+    if (resolvedBatchName !== batchName) setBatchName(resolvedBatchName);
     const payload = {
       batch_id: batchId,
-      batch_name: batchName,
+      batch_name: resolvedBatchName,
       order_date: orderDate,
       raw_text: rawText,
       menu_items: menuItems,
@@ -730,6 +741,7 @@ function RecognizePageInner() {
     };
     const saved = await saveJielong(payload);
     setCurrentBatchId(saved.batch_id);
+    await refreshCustomerAddresses();
     if (!isAutosave) {
       router.replace(`/recognize?batch_id=${saved.batch_id}`);
     }
@@ -771,6 +783,7 @@ function RecognizePageInner() {
 
   const updateCustomerNotes = (wechatId: string, notes: string) => {
     setCustomerNotesEdits((prev) => ({ ...prev, [wechatId]: notes }));
+    setDeliveryModeManual((prev) => ({ ...prev, [wechatId]: false }));
     setRows((prev) =>
       prev.map((r) =>
         (r.wechat_id.trim() || "未填写微信号") === wechatId ? { ...r, notes } : r
@@ -779,6 +792,7 @@ function RecognizePageInner() {
   };
 
   const updateDeliveryMode = (wechatId: string, mode: DeliveryMode) => {
+    setDeliveryModeManual((prev) => ({ ...prev, [wechatId]: true }));
     setDeliveryModes((prev) => ({
       ...prev,
       [wechatId]: { mode, customText: prev[wechatId]?.customText ?? "" },
@@ -786,6 +800,7 @@ function RecognizePageInner() {
   };
 
   const updateDeliveryCustom = (wechatId: string, customText: string) => {
+    setDeliveryModeManual((prev) => ({ ...prev, [wechatId]: true }));
     setDeliveryModes((prev) => ({
       ...prev,
       [wechatId]: { mode: "custom", customText },
@@ -797,17 +812,20 @@ function RecognizePageInner() {
       let changed = false;
       const next = { ...prev };
       for (const c of customerSummary) {
-        if (!next[c.wechat_id]) {
-          next[c.wechat_id] = inferDeliveryMode(
-            getCustomerNotes(c.wechat_id, c.notes),
-            customerAddresses[c.wechat_id]
-          );
+        if (deliveryModeManual[c.wechat_id]) continue;
+        const resolved = resolveDeliveryMode(
+          getCustomerNotes(c.wechat_id, c.notes),
+          customerAddresses[c.wechat_id]
+        );
+        const cur = next[c.wechat_id];
+        if (!cur || cur.mode !== resolved.mode || cur.customText !== resolved.customText) {
+          next[c.wechat_id] = resolved;
           changed = true;
         }
       }
       return changed ? next : prev;
     });
-  }, [customerSummary, customerNotesEdits, customerAddresses]);
+  }, [customerSummary, customerNotesEdits, customerAddresses, deliveryModeManual]);
 
   // 历史接龙打开后，编辑内容 debounce 自动保存到 Supabase/local。
   useEffect(() => {
@@ -893,9 +911,15 @@ function RecognizePageInner() {
           <input
             className="rounded border px-3 py-2 text-sm"
             value={orderDate}
-            onChange={(e) => setOrderDate(e.target.value)}
-            placeholder="如 5.28"
+            onChange={(e) => handleOrderDateChange(e.target.value)}
+            placeholder="如 2026-05-28 或 5/28"
           />
+          {orderDateWeekday ? (
+            <span className="rounded bg-zinc-100 px-2 py-1 text-sm text-zinc-700">{orderDateWeekday}</span>
+          ) : null}
+          {orderDate ? (
+            <span className="text-xs text-zinc-500">{formatDateWithWeekday(orderDate)}</span>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">订单记录表</h2>
@@ -973,7 +997,7 @@ function RecognizePageInner() {
                             : "bg-white"
                   }
                 >
-                  <td className="border px-1 py-1 truncate">{isFirst ? orderDate : ""}</td>
+                  <td className="border px-1 py-1 truncate">{isFirst ? formatDateWithWeekday(orderDate) : ""}</td>
                   <td className="border px-1 py-1 truncate">{isFirst ? row.wechat_id : ""}</td>
                   <td className="border px-1 py-1 truncate" title={getShortProductName(row)}>
                     {getShortProductName(row)}
@@ -1030,9 +1054,7 @@ function RecognizePageInner() {
             </thead>
             <tbody>
               {customerSummaryByNotes.map((row) => {
-                const dm =
-                  deliveryModes[row.wechat_id] ??
-                  inferDeliveryMode(row.notes, customerAddresses[row.wechat_id]);
+                const dm = getDeliveryModeForCustomer(row.wechat_id, row.notes);
                 const defaultAddr = customerAddresses[row.wechat_id];
                 return (
                 <tr key={`cs_${row.wechat_id}`}>

@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "test:parser": "node --import tsx scripts/test-parser.ts",
-    "test:analytics": "node --import tsx scripts/test-analytics.ts"
+    "test:analytics": "node --import tsx scripts/test-analytics.ts",
+    "test:delivery": "node --import tsx scripts/test-delivery-mode.ts",
+    "test:date": "node --import tsx scripts/test-date-format.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.2",

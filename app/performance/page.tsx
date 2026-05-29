@@ -2,30 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getSavedJielongs } from "@/lib/storage";
-import { buildPerformanceAnalytics, PerformanceSummary } from "@/lib/performanceAnalytics";
+import {
+  buildPerformanceAnalytics,
+  buildPerformanceInsights,
+  PerformanceSummary,
+} from "@/lib/performanceAnalytics";
 import { SavedJielong } from "@/lib/types";
 import { parseOrderDate } from "@/lib/sort";
+import { formatDateRangeMd, formatDateWithWeekday } from "@/lib/dateFormat";
 import { BarChart, LineChart } from "@/app/components/Charts";
 
 function formatMoney(n: number): string {
   return (Math.round((n + Number.EPSILON) * 100) / 100).toFixed(1);
-}
-
-const REVENUE_COLOR = "#10b981";
-const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
-
-function formatDateWithWeekday(dateStr: string): string {
-  const ts = parseOrderDate(dateStr);
-  if (ts === null) return dateStr;
-  const d = new Date(ts);
-  return `${d.getMonth() + 1}/${d.getDate()} 周${WEEKDAYS[d.getDay()]}`;
-}
-
-function toMd(dateStr: string): string {
-  const ts = parseOrderDate(dateStr);
-  if (ts === null) return dateStr;
-  const d = new Date(ts);
-  return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function batchMonth(orderDate?: string): number | null {
@@ -73,6 +61,11 @@ export default function PerformancePage() {
     [filteredBatches, loading]
   );
 
+  const insights = useMemo(
+    () => (data ? buildPerformanceInsights(filteredBatches, data) : []),
+    [filteredBatches, data]
+  );
+
   if (loading || !data) {
     return (
       <div className="rounded-xl bg-white p-4 shadow-sm">
@@ -97,15 +90,16 @@ export default function PerformancePage() {
   const labels = data.daily.map((d) => formatDateWithWeekday(d.date));
   const dateRange =
     data.daily.length > 0
-      ? `${toMd(data.daily[0].date)} 至 ${toMd(data.daily[data.daily.length - 1].date)}`
+      ? formatDateRangeMd(data.daily[0].date, data.daily[data.daily.length - 1].date)
       : "-";
 
   const kpis = [
+    { label: "日期范围", value: dateRange },
+    { label: "总接龙数", value: String(data.totalBatches) },
     { label: "总销售额", value: formatMoney(data.totalRevenue) },
-    { label: "总订单数", value: String(data.totalOrders) },
-    { label: "总客户数", value: String(data.totalCustomers) },
-    { label: "平均客单价", value: formatMoney(data.avgOrderValue) },
-    { label: "总商品数量", value: String(data.totalQuantity) },
+    { label: "平均每场接龙销售额", value: formatMoney(data.avgRevenuePerBatch) },
+    { label: "最高销售日", value: data.bestDay ? `${formatDateWithWeekday(data.bestDay.date)} (${formatMoney(data.bestDay.revenue)})` : "-" },
+    { label: "最低销售日", value: data.worstDay ? `${formatDateWithWeekday(data.worstDay.date)} (${formatMoney(data.worstDay.revenue)})` : "-" },
   ];
 
   return (
@@ -132,21 +126,38 @@ export default function PerformancePage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {kpis.map((kpi) => (
           <div key={kpi.label} className="rounded-xl bg-white p-4 shadow-sm">
             <p className="text-xs text-zinc-500">{kpi.label}</p>
-            <p className="mt-1 text-2xl font-bold">{kpi.value}</p>
+            <p className="mt-1 text-lg font-bold leading-snug">{kpi.value}</p>
           </div>
         ))}
       </div>
+
+      {data.bestBatch || data.worstBatch ? (
+        <div className="rounded-xl bg-white p-4 text-sm text-zinc-700 shadow-sm">
+          {data.bestBatch ? (
+            <p>
+              最高销售接龙：<span className="font-semibold">{data.bestBatch.batch_name}</span>
+              （{formatDateWithWeekday(data.bestBatch.order_date)} · {formatMoney(data.bestBatch.revenue)} 元）
+            </p>
+          ) : null}
+          {data.worstBatch ? (
+            <p className="mt-1">
+              最低销售接龙：<span className="font-semibold">{data.worstBatch.batch_name}</span>
+              （{formatDateWithWeekday(data.worstBatch.order_date)} · {formatMoney(data.worstBatch.revenue)} 元）
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="rounded-xl bg-white p-4 shadow-sm">
         <h2 className="mb-2 text-lg font-semibold">销售额趋势</h2>
         <LineChart
           labels={labels}
           values={data.daily.map((d) => d.revenue)}
-          color={REVENUE_COLOR}
+          color="#10b981"
           formatValue={formatMoney}
           yAxisLabel="销售额"
         />
@@ -156,22 +167,19 @@ export default function PerformancePage() {
         <h2 className="mb-2 text-lg font-semibold">销售额记录</h2>
         <BarChart
           labels={labels}
-          series={[{ name: "销售额", color: REVENUE_COLOR, values: data.daily.map((d) => d.revenue) }]}
+          series={[{ name: "销售额", color: "#10b981", values: data.daily.map((d) => d.revenue) }]}
           formatValue={formatMoney}
           yAxisLabel="销售额"
         />
       </div>
 
-      <div className="rounded-xl bg-white p-4 shadow-sm text-sm text-zinc-700">
-        <p>
-          日期范围：<span className="font-semibold">{dateRange}</span>
-        </p>
-        <p className="mt-1">
-          总接龙数：<span className="font-semibold">{data.totalBatches}</span>
-        </p>
-        <p className="mt-1">
-          总销售额：<span className="font-semibold">{formatMoney(data.totalRevenue)}</span>
-        </p>
+      <div className="rounded-xl bg-white p-4 shadow-sm">
+        <h2 className="mb-2 text-lg font-semibold">经营洞察</h2>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-zinc-700">
+          {insights.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
       </div>
     </div>
   );

@@ -60,6 +60,20 @@ export function saveCustomers(customers: Customer[]): void {
   setJson(CUSTOMERS_KEY, customers);
 }
 
+export function updateCustomerAddress(wechatId: string, default_address: string): Customer {
+  const customers = getCustomers();
+  const idx = customers.findIndex((c) => c.wechat_id === wechatId);
+  if (idx < 0) throw new Error("客户不存在");
+  const updated: Customer = {
+    ...customers[idx],
+    default_address: default_address.trim() || undefined,
+    updated_at: nowIso(),
+  };
+  customers[idx] = updated;
+  saveCustomers(customers);
+  return updated;
+}
+
 export function upsertCustomersFromJielong(jielong: SavedJielong): void {
   const updated = applyJielongToCustomers(getCustomers(), jielong, nowIso(), makeCustomerId);
   saveCustomers(updated);

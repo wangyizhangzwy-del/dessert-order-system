@@ -1,3 +1,5 @@
+import { parseOrderDateTimestamp } from "@/lib/dateFormat";
+
 interface HasDateLikeFields {
   order_date?: string;
   updated_at?: string;
@@ -5,19 +7,7 @@ interface HasDateLikeFields {
 }
 
 export function parseOrderDate(orderDate?: string): number | null {
-  if (!orderDate) return null;
-  const ts = Date.parse(orderDate);
-  if (!Number.isNaN(ts)) return ts;
-
-  const md = orderDate.match(/^(\d{1,2})[./-](\d{1,2})$/);
-  if (md) {
-    const y = new Date().getFullYear();
-    const m = Number(md[1]);
-    const d = Number(md[2]);
-    const local = new Date(y, m - 1, d).getTime();
-    if (!Number.isNaN(local)) return local;
-  }
-  return null;
+  return parseOrderDateTimestamp(orderDate);
 }
 
 function fallbackTimestamp(v: HasDateLikeFields): number {

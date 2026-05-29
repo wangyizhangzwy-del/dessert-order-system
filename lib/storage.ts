@@ -42,6 +42,12 @@ export async function rebuildCustomerProfiles(): Promise<{ updated: number }> {
   return useSupabase() ? remote.rebuildCustomerProfiles() : local.backfillCustomerAddresses();
 }
 
+export async function updateCustomerAddress(wechatId: string, default_address: string): Promise<Customer> {
+  return useSupabase()
+    ? remote.updateCustomerAddress(wechatId, default_address)
+    : local.updateCustomerAddress(wechatId, default_address);
+}
+
 export async function getSettings(): Promise<AppSettings> {
   return useSupabase() ? remote.getSettings() : local.getSettings();
 }

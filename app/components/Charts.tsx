@@ -145,3 +145,73 @@ export function ChartLegend({ series }: { series: { name: string; color: string 
     </div>
   );
 }
+
+export interface DonutSlice {
+  label: string;
+  value: number;
+  color: string;
+}
+
+// 环形占比图（Top N + 其他）。
+export function DonutChart({
+  slices,
+  formatValue = (n) => String(n),
+  size = 220,
+}: {
+  slices: DonutSlice[];
+  formatValue?: (n: number) => string;
+  size?: number;
+}) {
+  const total = slices.reduce((s, x) => s + x.value, 0);
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size * 0.36;
+  const ir = r * 0.55;
+  let angle = -Math.PI / 2;
+
+  const arcs = slices.map((slice) => {
+    const frac = total > 0 ? slice.value / total : 0;
+    const sweep = frac * Math.PI * 2;
+    const x1 = cx + r * Math.cos(angle);
+    const y1 = cy + r * Math.sin(angle);
+    const x2 = cx + r * Math.cos(angle + sweep);
+    const y2 = cy + r * Math.sin(angle + sweep);
+    const ix1 = cx + ir * Math.cos(angle + sweep);
+    const iy1 = cy + ir * Math.sin(angle + sweep);
+    const ix2 = cx + ir * Math.cos(angle);
+    const iy2 = cy + ir * Math.sin(angle);
+    const large = sweep > Math.PI ? 1 : 0;
+    const d = `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} L ${ix1} ${iy1} A ${ir} ${ir} 0 ${large} 0 ${ix2} ${iy2} Z`;
+    angle += sweep;
+    return { ...slice, d, pct: total > 0 ? Math.round(frac * 1000) / 10 : 0 };
+  });
+
+  return (
+    <div className="flex flex-wrap items-center gap-6">
+      <svg width={size} height={size} role="img">
+        {arcs.map((a) => (
+          <path key={a.label} d={a.d} fill={a.color} stroke="#fff" strokeWidth={1} />
+        ))}
+        <text x={cx} y={cy - 4} textAnchor="middle" fontSize="12" fontWeight="600" fill="#3f3f46">
+          合计
+        </text>
+        <text x={cx} y={cy + 14} textAnchor="middle" fontSize="11" fill="#71717a">
+          {formatValue(total)}
+        </text>
+      </svg>
+      <div className="min-w-[160px] space-y-1 text-xs text-zinc-700">
+        {arcs.map((a) => (
+          <div key={a.label} className="flex items-center justify-between gap-3">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: a.color }} />
+              {a.label}
+            </span>
+            <span className="tabular-nums text-zinc-500">
+              {a.pct}% · {formatValue(a.value)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

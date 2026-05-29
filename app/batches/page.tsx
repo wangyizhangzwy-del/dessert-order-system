@@ -5,18 +5,7 @@ import Link from "next/link";
 import { SavedJielong } from "@/lib/types";
 import { deleteJielong, getSavedJielongs } from "@/lib/storage";
 import { sortByRecentDate } from "@/lib/sort";
-
-function parseOrderDateForIndex(orderDate?: string): number {
-  if (!orderDate) return 0;
-  const ts = Date.parse(orderDate);
-  if (!Number.isNaN(ts)) return ts;
-  const md = orderDate.match(/^(\d{1,2})[./-](\d{1,2})$/);
-  if (md) {
-    const y = new Date().getFullYear();
-    return new Date(y, Number(md[1]) - 1, Number(md[2])).getTime();
-  }
-  return 0;
-}
+import { formatBatchDisplayName, formatDateWithWeekday } from "@/lib/dateFormat";
 
 export default function BatchesPage() {
   const [batches, setBatches] = useState<SavedJielong[]>([]);
@@ -48,21 +37,6 @@ export default function BatchesPage() {
     }
   };
 
-  const nameMap = (() => {
-    const asc = [...batches].sort((a, b) => {
-      const ta = parseOrderDateForIndex(a.order_date) || Date.parse(a.created_at ?? "") || 0;
-      const tb = parseOrderDateForIndex(b.order_date) || Date.parse(b.created_at ?? "") || 0;
-      if (ta !== tb) return ta - tb;
-      return (Date.parse(a.created_at ?? "") || 0) - (Date.parse(b.created_at ?? "") || 0);
-    });
-    const map = new Map<string, string>();
-    const year = new Date().getFullYear();
-    asc.forEach((batch, idx) => {
-      map.set(batch.batch_id, `${year}-${idx + 1}-${batch.order_date || "未标日期"}`);
-    });
-    return map;
-  })();
-
   return (
     <div className="space-y-4">
       <div className="rounded-xl bg-white p-4 shadow-sm">
@@ -73,33 +47,36 @@ export default function BatchesPage() {
       ) : batches.length === 0 ? (
         <div className="rounded-xl bg-white p-4 text-sm text-zinc-600 shadow-sm">暂无接龙</div>
       ) : (
-        batches.map((batch) => (
-          <div key={batch.batch_id} className="rounded-xl bg-white p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold">{nameMap.get(batch.batch_id) ?? batch.batch_name}</p>
-                <p className="text-sm text-zinc-600">
-                  {batch.order_date} · {(batch.total_amount ?? 0).toFixed(1)} · 客户{" "}
-                  {(batch.customer_summary_rows ?? []).length}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  onClick={() => handleDelete(batch.batch_id)}
-                  className="rounded-md bg-zinc-200 px-2.5 py-1.5 text-xs text-zinc-600 hover:bg-zinc-300"
-                >
-                  删除
-                </button>
-                <Link
-                  href={`/recognize?batch_id=${batch.batch_id}`}
-                  className="rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800"
-                >
-                  打开
-                </Link>
+        batches.map((batch) => {
+          const displayName = formatBatchDisplayName(batch.batch_name, batch.order_date);
+          return (
+            <div key={batch.batch_id} className="rounded-xl bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold">{displayName}</p>
+                  <p className="text-sm text-zinc-600">
+                    日期：{formatDateWithWeekday(batch.order_date)} · {(batch.total_amount ?? 0).toFixed(1)} · 客户{" "}
+                    {(batch.customer_summary_rows ?? []).length}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    onClick={() => handleDelete(batch.batch_id)}
+                    className="rounded-md bg-zinc-200 px-2.5 py-1.5 text-xs text-zinc-600 hover:bg-zinc-300"
+                  >
+                    删除
+                  </button>
+                  <Link
+                    href={`/recognize?batch_id=${batch.batch_id}`}
+                    className="rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-zinc-800"
+                  >
+                    打开
+                  </Link>
+                </div>
               </div>
             </div>
-          </div>
-        ))
+          );
+        })
       )}
     </div>
   );

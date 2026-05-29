@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Customer } from "@/lib/types";
 import { getCustomers, rebuildCustomerProfiles } from "@/lib/storage";
@@ -27,29 +27,32 @@ export default function CustomersPage() {
   const [query, setQuery] = useState("");
   const rebuiltRef = useRef(false);
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      let data = await getCustomers();
-      // 已有历史但 default_address 缺失时，自动回填一次并重新拉取（无需手动编辑）。
-      const needsRebuild = data.some(
-        (c) => !c.default_address && deriveAddressFromHistory(c.order_history)
-      );
-      if (needsRebuild && !rebuiltRef.current) {
-        rebuiltRef.current = true;
-        try {
-          await rebuildCustomerProfiles();
-          data = await getCustomers();
-        } catch {
-          // 回填失败不阻塞展示，下方仍会用派生地址兜底显示。
-        }
+  const loadCustomers = useCallback(async () => {
+    let data = await getCustomers();
+    const needsRebuild = data.some(
+      (c) => !c.default_address && deriveAddressFromHistory(c.order_history)
+    );
+    if (needsRebuild && !rebuiltRef.current) {
+      rebuiltRef.current = true;
+      try {
+        await rebuildCustomerProfiles();
+        data = await getCustomers();
+      } catch {
+        // 回填失败不阻塞展示
       }
-      if (active) setCustomers(data);
-    })();
-    return () => {
-      active = false;
-    };
+    }
+    setCustomers(data);
   }, []);
+
+  useEffect(() => {
+    void loadCustomers();
+  }, [loadCustomers]);
+
+  useEffect(() => {
+    const onFocus = () => void loadCustomers();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [loadCustomers]);
 
   const filtered = useMemo(
     () =>
@@ -93,7 +96,7 @@ export default function CustomersPage() {
               className="rounded bg-zinc-900 px-3 py-1 text-xs text-white"
               href={`/customers/${encodeURIComponent(c.wechat_id)}`}
             >
-              查看历史订单
+              查看历史订单记录
             </Link>
           </div>
         </div>

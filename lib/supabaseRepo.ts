@@ -156,6 +156,21 @@ export async function listCustomers(): Promise<Customer[]> {
   return (data ?? []).map((r) => rowToCustomer(r as CustomerRow));
 }
 
+export async function updateCustomerAddress(wechatId: string, default_address: string): Promise<Customer> {
+  const db = getSupabaseAdmin();
+  const customers = await listCustomers();
+  const existing = customers.find((c) => c.wechat_id === wechatId);
+  if (!existing) throw new Error("客户不存在");
+  const updated: Customer = {
+    ...existing,
+    default_address: default_address.trim() || undefined,
+    updated_at: nowIso(),
+  };
+  const { error } = await db.from("customers").upsert(customerToRow(updated), { onConflict: "wechat_id" });
+  if (error) throw new Error(error.message);
+  return updated;
+}
+
 // 回填：根据客户历史订单备注提取地址，写入 default_address（已有真实地址不被空值覆盖）。
 export async function backfillCustomerAddresses(): Promise<{ updated: number }> {
   const db = getSupabaseAdmin();

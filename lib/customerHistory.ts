@@ -1,5 +1,20 @@
 import { Customer, CustomerOrderHistory, SavedJielong } from "@/lib/types";
-import { deriveAddressFromHistory } from "@/lib/address";
+import { deriveAddressFromHistory, extractAddress, isPickupNote } from "@/lib/address";
+
+// 保存接龙时：新客户若备注含真实地址且尚无 default_address，写入客户档案（不覆盖已有地址，不把自取当地址）。
+function applyDefaultAddressFromJielong(customers: Customer[], jielong: SavedJielong): Customer[] {
+  return customers.map((c) => {
+    if (c.default_address?.trim()) return c;
+    const order = (jielong.parsed_orders ?? []).find(
+      (o) => o.wechat_id === c.wechat_id && !o.is_example
+    );
+    if (!order?.notes) return c;
+    if (isPickupNote(order.notes)) return c;
+    const addr = extractAddress(order.notes);
+    if (!addr) return c;
+    return { ...c, default_address: addr };
+  });
+}
 
 // 纯函数：根据一次接龙，把（非示例）客户订单合并进客户列表。
 // 同一 batch_id 的历史按 batch_id upsert，不重复。客户/服务端都复用这段逻辑。
@@ -35,7 +50,10 @@ export function applyJielongToCustomers(
       const hIdx = order_history.findIndex((h) => h.batch_id === jielong.batch_id);
       if (hIdx >= 0) order_history[hIdx] = { ...history, created_at: order_history[hIdx].created_at };
       else order_history.unshift(history);
-      const default_address = deriveAddressFromHistory(order_history) ?? existing.default_address;
+      const default_address =
+        existing.default_address?.trim()
+          ? existing.default_address
+          : deriveAddressFromHistory(order_history) ?? undefined;
       next[idx] = { ...existing, order_history, default_address, updated_at: now };
     } else {
       const order_history = [history];
@@ -50,5 +68,5 @@ export function applyJielongToCustomers(
       });
     }
   }
-  return next;
+  return applyDefaultAddressFromJielong(next, jielong);
 }
