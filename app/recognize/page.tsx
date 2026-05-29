@@ -253,7 +253,6 @@ function RecognizePageInner() {
   const [rows, setRows] = useState<EditableRow[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [customerFlags, setCustomerFlags] = useState<Record<string, CustomerFlags>>({});
-  const [tableExpanded, setTableExpanded] = useState(false);
   const [batchName, setBatchName] = useState(() => generateBatchName(defaultOrderDateString()));
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(editingBatchId ?? null);
   const [highlightRowId, setHighlightRowId] = useState<string>("");
@@ -553,31 +552,6 @@ function RecognizePageInner() {
         return next;
       })
     );
-  };
-
-  const addRow = () => {
-    setRows((prev) => [
-      ...prev,
-      {
-        row_id: `manual_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        sequence: prev.length + 1,
-        raw_line: "",
-        wechat_id: "",
-        sku_code: "",
-        variant: "",
-        flavor_combo: "",
-        cake_name: "",
-        display_name: "",
-        quantity: 1,
-        unit_price: 0,
-        line_total: 0,
-        notes: "",
-        status: "success",
-        warning_reason: "",
-        is_example: false,
-        production_status: "未制作",
-      },
-    ]);
   };
 
   const buildCurrentOrders = (): ParsedOrder[] => {
@@ -1013,43 +987,29 @@ function RecognizePageInner() {
             Failed: {failedRows.length}
           </button>
           <button
-            onClick={() => setTableExpanded((v) => !v)}
-            className="rounded bg-indigo-100 px-3 py-2 text-sm text-indigo-700"
-          >
-            {tableExpanded ? "缩小到3行" : "完全展开"}
-          </button>
-          <button onClick={addRow} className="rounded bg-zinc-200 px-3 py-2 text-sm text-zinc-700">
-            添加一行
-          </button>
-          <button
             onClick={copyGroupedExcel}
             className="rounded bg-zinc-200 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-300"
           >
             复制订单记录
           </button>
         </div>
-        <div
-          className={`mt-3 overflow-x-auto overflow-y-auto rounded border ${
-            tableExpanded ? "max-h-none" : "max-h-[480px]"
-          }`}
-        >
-          <table className="min-w-[1280px] w-max border-collapse text-sm">
+        <div className="mt-3 overflow-x-auto rounded border lg:overflow-x-visible">
+          <table className="w-full min-w-[720px] table-fixed border-collapse text-sm lg:min-w-0">
             <colgroup>
-              <col className="w-[104px]" />
-              <col className="w-[120px]" />
-              <col className="min-w-[300px]" />
-              <col className="w-[56px]" />
-              <col className="w-[80px]" />
-              <col className="w-[96px]" />
-              <col className="min-w-[180px]" />
-              <col className="w-[92px]" />
-              <col className="w-[92px]" />
-              <col className="w-[92px]" />
+              <col className="w-[11%]" />
+              <col className="w-[30%]" />
+              <col className="w-[5%]" />
+              <col className="w-[7%]" />
+              <col className="w-[8%]" />
+              <col className="w-[12%]" />
+              <col className="w-[9%]" />
+              <col className="w-[9%]" />
+              <col className="w-[9%]" />
             </colgroup>
             <thead>
               <tr className="bg-zinc-100">
-                {["日期", "客户", "商品", "数量", "单价(美金)", "总金额(美金)", "备注", "制作状态", "配送状态", "付款状态"].map((h) => (
-                  <th key={h} className="sticky top-0 z-10 whitespace-nowrap border bg-zinc-100 px-2 py-2 text-left font-medium">
+                {["客户", "商品", "数量", "单价(美金)", "总金额(美金)", "备注", "制作状态", "配送状态", "付款状态"].map((h) => (
+                  <th key={h} className="border bg-zinc-100 px-1.5 py-2 text-left text-xs font-medium leading-tight lg:px-2 lg:text-sm">
                     {h}
                   </th>
                 ))}
@@ -1075,38 +1035,33 @@ function RecognizePageInner() {
                   }
                 >
                   {isFirst ? (
-                    <td rowSpan={rowSpan} className="border px-2 py-2 align-top whitespace-nowrap">
-                      {formatDateWithWeekday(orderDate)}
-                    </td>
-                  ) : null}
-                  {isFirst ? (
-                    <td rowSpan={rowSpan} className="border px-2 py-2 align-top">
+                    <td rowSpan={rowSpan} className="border px-1.5 py-1.5 align-top break-words lg:px-2 lg:py-2">
                       {row.wechat_id}
                     </td>
                   ) : null}
-                  <td className="border px-2 py-2 align-top whitespace-normal break-words">
+                  <td className="border px-1.5 py-1.5 align-top text-xs leading-snug break-words whitespace-normal lg:px-2 lg:py-2 lg:text-sm">
                     {getOrderRecordProductName(row)}
                   </td>
-                  <td className="border px-2 py-2 text-center align-top">{row.quantity}</td>
-                  <td className="border px-2 py-2 text-right align-top whitespace-nowrap">
+                  <td className="border px-1 py-1.5 text-center align-top lg:px-2 lg:py-2">{row.quantity}</td>
+                  <td className="border px-1 py-1.5 text-right align-top whitespace-nowrap lg:px-2 lg:py-2">
                     {formatPrice(row.unit_price)}
                   </td>
                   {isFirst ? (
-                    <td rowSpan={rowSpan} className="border px-2 py-2 text-right align-top whitespace-nowrap">
+                    <td rowSpan={rowSpan} className="border px-1 py-1.5 text-right align-top whitespace-nowrap lg:px-2 lg:py-2">
                       {formatMoney(customerTotal)}
                     </td>
                   ) : null}
                   {isFirst ? (
-                    <td rowSpan={rowSpan} className="border px-2 py-2 align-top">
+                    <td rowSpan={rowSpan} className="border px-1 py-1.5 align-top lg:px-2 lg:py-2">
                       <input
-                        className="w-full min-w-[140px] rounded border px-1.5 py-1 text-sm"
+                        className="w-full max-w-full rounded border px-1 py-0.5 text-xs leading-snug lg:text-sm"
                         value={getCustomerNotes(wechatId, row.notes)}
                         onChange={(e) => updateCustomerNotes(wechatId, e.target.value)}
                       />
                     </td>
                   ) : null}
                   {isFirst ? (
-                    <td rowSpan={rowSpan} className="border px-2 py-2 text-center align-top">
+                    <td rowSpan={rowSpan} className="border px-1 py-1.5 text-center align-top lg:px-2 lg:py-2">
                       <select
                         className={statusSelectClass("production", productionStatus)}
                         value={productionStatus}
@@ -1118,7 +1073,7 @@ function RecognizePageInner() {
                     </td>
                   ) : null}
                   {isFirst ? (
-                    <td rowSpan={rowSpan} className="border px-2 py-2 text-center align-top">
+                    <td rowSpan={rowSpan} className="border px-1 py-1.5 text-center align-top lg:px-2 lg:py-2">
                       <select
                         className={statusSelectClass(
                           "delivery",
@@ -1135,7 +1090,7 @@ function RecognizePageInner() {
                     </td>
                   ) : null}
                   {isFirst ? (
-                    <td rowSpan={rowSpan} className="border px-2 py-2 text-center align-top">
+                    <td rowSpan={rowSpan} className="border px-1 py-1.5 text-center align-top lg:px-2 lg:py-2">
                       <select
                         className={statusSelectClass(
                           "payment",
