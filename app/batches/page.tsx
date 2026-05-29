@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { SavedJielong } from "@/lib/types";
 import { deleteJielong, getSavedJielongs } from "@/lib/storage";
 import { sortByRecentDate } from "@/lib/sort";
-import { formatBatchDisplayName, formatDateWithWeekday } from "@/lib/dateFormat";
+import { buildBatchTitleMap, formatDateWithWeekday } from "@/lib/dateFormat";
 
 export default function BatchesPage() {
   const [batches, setBatches] = useState<SavedJielong[]>([]);
@@ -25,6 +25,8 @@ export default function BatchesPage() {
       active = false;
     };
   }, []);
+
+  const titleMap = useMemo(() => buildBatchTitleMap(batches), [batches]);
 
   const handleDelete = async (batchId: string) => {
     if (!window.confirm("确定删除此历史接龙？删除后无法恢复。")) return;
@@ -48,7 +50,7 @@ export default function BatchesPage() {
         <div className="rounded-xl bg-white p-4 text-sm text-zinc-600 shadow-sm">暂无接龙</div>
       ) : (
         batches.map((batch) => {
-          const displayName = formatBatchDisplayName(batch.batch_name, batch.order_date);
+          const displayName = titleMap.get(batch.batch_id) ?? batch.batch_name;
           return (
             <div key={batch.batch_id} className="rounded-xl bg-white p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3">

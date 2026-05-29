@@ -128,3 +128,49 @@ export function orderDateFromTimestamp(iso?: string): string {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
+// 历史接龙列表标题：2026-3-05-28-周四（年-今年第几单-月日-周几）
+export function formatBatchListTitle(
+  year: number,
+  yearOrderIndex: number,
+  orderDate?: string
+): string {
+  const p = parseLocalDate(orderDate);
+  if (p) {
+    const wd = weekdayFromParts(p);
+    const datePart = `${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+    return `${year}-${yearOrderIndex}-${datePart}-${wd}`;
+  }
+  const wd = chineseWeekday(orderDate);
+  const fallback = orderDate?.trim() || "未标日期";
+  return wd ? `${year}-${yearOrderIndex}-${fallback}-${wd}` : `${year}-${yearOrderIndex}-${fallback}`;
+}
+
+interface BatchLike {
+  batch_id: string;
+  order_date?: string;
+  created_at?: string;
+}
+
+export function buildBatchTitleMap(batches: BatchLike[]): Map<string, string> {
+  const asc = [...batches].sort((a, b) => {
+    const ta = parseOrderDateTimestamp(a.order_date) ?? Date.parse(a.created_at ?? "") ?? 0;
+    const tb = parseOrderDateTimestamp(b.order_date) ?? Date.parse(b.created_at ?? "") ?? 0;
+    if (ta !== tb) return ta - tb;
+    return (Date.parse(a.created_at ?? "") || 0) - (Date.parse(b.created_at ?? "") || 0);
+  });
+
+  const yearCounters = new Map<number, number>();
+  const map = new Map<string, string>();
+
+  for (const batch of asc) {
+    const p = parseLocalDate(batch.order_date);
+    const created = Date.parse(batch.created_at ?? "");
+    const year = p?.year ?? (Number.isFinite(created) ? new Date(created).getFullYear() : new Date().getFullYear());
+    const next = (yearCounters.get(year) ?? 0) + 1;
+    yearCounters.set(year, next);
+    map.set(batch.batch_id, formatBatchListTitle(year, next, batch.order_date));
+  }
+
+  return map;
+}
