@@ -131,6 +131,23 @@ function getShortProductName(row: EditableRow): string {
   return row.display_name.trim() || row.cake_name.trim() || `SKU ${row.sku_code || "-"}`;
 }
 
+function statusSelectClass(
+  kind: "production" | "delivery" | "payment",
+  value: string
+): string {
+  const base = "w-full rounded border p-0.5 text-[11px] text-center";
+  if (kind === "production" && value === "已制作") {
+    return `${base} border-red-200 bg-red-50 text-red-700`;
+  }
+  if (kind === "delivery" && value === "已送达") {
+    return `${base} border-blue-200 bg-blue-50 text-blue-700`;
+  }
+  if (kind === "payment" && value === "已付款") {
+    return `${base} border-green-200 bg-green-50 text-green-700`;
+  }
+  return `${base} border-zinc-200 bg-white text-zinc-700`;
+}
+
 function toRows(orders: ParsedOrder[]): EditableRow[] {
   const rows: EditableRow[] = [];
   let sequence = 1;
@@ -621,7 +638,7 @@ function RecognizePageInner() {
 
   const toGroupedExcelTSV = (): string => {
     const table = [
-      ["日期", "客户", "商品", "数量", "单价", "总金额", "备注", "配送状态", "付款状态", "制作状态"],
+      ["日期", "客户", "商品", "数量", "单价", "总金额", "备注", "制作状态", "配送状态", "付款状态"],
       ...buildGroupedExcelRows().map((r) => [
         r.date,
         r.customer,
@@ -630,9 +647,9 @@ function RecognizePageInner() {
         r.unit_price,
         r.customer_total,
         r.notes,
+        r.production_status,
         r.delivery_status,
         r.payment_status,
-        r.production_status,
       ]),
     ];
     return toTsv(table);
@@ -789,6 +806,26 @@ function RecognizePageInner() {
         (r.wechat_id.trim() || "未填写微信号") === wechatId ? { ...r, notes } : r
       )
     );
+  };
+
+  const updateProductionStatus = (rowId: string, production_status: string) => {
+    setRows((prev) =>
+      prev.map((r) => (r.row_id === rowId ? { ...r, production_status } : r))
+    );
+  };
+
+  const updateDeliveryStatus = (wechatId: string, delivered: boolean) => {
+    setCustomerFlags((prev) => ({
+      ...prev,
+      [wechatId]: { ...(prev[wechatId] ?? { delivered: false, paid: false }), delivered },
+    }));
+  };
+
+  const updatePaymentStatus = (wechatId: string, paid: boolean) => {
+    setCustomerFlags((prev) => ({
+      ...prev,
+      [wechatId]: { ...(prev[wechatId] ?? { delivered: false, paid: false }), paid },
+    }));
   };
 
   const updateDeliveryMode = (wechatId: string, mode: DeliveryMode) => {
@@ -1014,22 +1051,47 @@ function RecognizePageInner() {
                       />
                     ) : null}
                   </td>
-                  <td className="border px-1 py-1 text-center text-[11px]">
-                    {row.production_status || "未制作"}
+                  <td className="border px-1 py-1 text-center">
+                    <select
+                      className={statusSelectClass("production", row.production_status || "未制作")}
+                      value={row.production_status || "未制作"}
+                      onChange={(e) => updateProductionStatus(row.row_id, e.target.value)}
+                    >
+                      <option value="未制作">未制作</option>
+                      <option value="已制作">已制作</option>
+                    </select>
                   </td>
-                  <td className="border px-1 py-1 text-center text-[11px]">
-                    {isFirst
-                      ? (customerFlags[wechatId]?.delivered ?? false)
-                        ? "已送达"
-                        : "未送达"
-                      : ""}
+                  <td className="border px-1 py-1 text-center">
+                    {isFirst ? (
+                      <select
+                        className={statusSelectClass(
+                          "delivery",
+                          customerFlags[wechatId]?.delivered ? "已送达" : "未送达"
+                        )}
+                        value={customerFlags[wechatId]?.delivered ? "已送达" : "未送达"}
+                        onChange={(e) =>
+                          updateDeliveryStatus(wechatId, e.target.value === "已送达")
+                        }
+                      >
+                        <option value="未送达">未送达</option>
+                        <option value="已送达">已送达</option>
+                      </select>
+                    ) : null}
                   </td>
-                  <td className="border px-1 py-1 text-center text-[11px]">
-                    {isFirst
-                      ? (customerFlags[wechatId]?.paid ?? false)
-                        ? "已付款"
-                        : "未付款"
-                      : ""}
+                  <td className="border px-1 py-1 text-center">
+                    {isFirst ? (
+                      <select
+                        className={statusSelectClass(
+                          "payment",
+                          customerFlags[wechatId]?.paid ? "已付款" : "未付款"
+                        )}
+                        value={customerFlags[wechatId]?.paid ? "已付款" : "未付款"}
+                        onChange={(e) => updatePaymentStatus(wechatId, e.target.value === "已付款")}
+                      >
+                        <option value="未付款">未付款</option>
+                        <option value="已付款">已付款</option>
+                      </select>
+                    ) : null}
                   </td>
                 </tr>
               ))}
