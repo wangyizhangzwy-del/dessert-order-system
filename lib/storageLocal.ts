@@ -8,6 +8,12 @@ import {
 } from "@/lib/types";
 import { applyJielongToCustomers } from "@/lib/customerHistory";
 import { deriveAddressFromHistory } from "@/lib/address";
+import {
+  safeGetLocalStorage,
+  safeParseJson,
+  safeRemoveLocalStorage,
+  safeSetLocalStorage,
+} from "@/lib/safeStorage";
 
 const SAVED_JIELONGS_KEY = "dessert_app_saved_jielongs";
 const CUSTOMERS_KEY = "dessert_app_customers";
@@ -24,18 +30,13 @@ function makeCustomerId(): string {
 
 function getJson<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
+  const raw = safeGetLocalStorage(key);
+  return safeParseJson(raw, fallback);
 }
 
 function setJson<T>(key: string, value: T): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(key, JSON.stringify(value));
+  safeSetLocalStorage(key, JSON.stringify(value));
 }
 
 export function getSavedJielongs(): SavedJielong[] {
@@ -123,7 +124,7 @@ export function getDraft(): DraftPayload | null {
 
 export function clearDraft(): void {
   if (typeof window === "undefined") return;
-  localStorage.removeItem(DRAFT_KEY);
+  safeRemoveLocalStorage(DRAFT_KEY);
 }
 
 export function exportAllData(): BackupData {
