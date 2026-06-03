@@ -573,5 +573,115 @@ export function runParserRegressionChecks(): string[] {
     "焦糖泡芙×2 泰奶泡芙*1"
   );
 
+  const xiaoBeiMenuRelay = `#接龙
+1. 肉松小贝一盒三个（原味/咸蛋黄/芋泥/麻薯/奶贝/芋泥奶贝）16.9/21.9/19.9/19.9/19.9/21.9
+2. 焦糖脆壳香草小泡芙 19.9
+3. 泰奶可可布丁薄脆大泡芙 9.9
+1. Lumi Sweets
+2. Alice 5原味+5奶贝
+3. Bob 5原味，5奶贝
+4. Carol 5原味,5奶贝
+5. Dave 5原味、5奶贝
+6. Eve 5原味*2+5奶贝x1
+7. Fay 5芋泥奶贝
+8. Grace 5奶贝x2，5芋泥奶贝`;
+
+  const xbParsed = parseWechatRelay(xiaoBeiMenuRelay);
+
+  function assertXiaoBeiLine(
+    wechatId: string,
+    expected: { variant: string; quantity: number; price: number }[]
+  ) {
+    const o = xbParsed.orders.find((x) => x.wechat_id === wechatId);
+    if (!o) {
+      errors.push(`5号肉松小贝：缺少客户 ${wechatId}`);
+      return;
+    }
+    if (o.status !== "success") {
+      errors.push(`5号肉松小贝：${wechatId} 状态应为 success（${o.warning_reason ?? o.status}）`);
+    }
+    const xbItems = o.items.filter(
+      (it) => (it.cake_name ?? "").includes("肉松小贝") || it.sku_code === "1" || it.sku_code === "5"
+    );
+    if (xbItems.length !== expected.length) {
+      errors.push(
+        `5号肉松小贝：${wechatId} 应有 ${expected.length} 个肉松小贝商品，实际 ${xbItems.length}`
+      );
+      return;
+    }
+    for (let i = 0; i < expected.length; i += 1) {
+      const exp = expected[i];
+      const item = xbItems[i];
+      const label = item.display_name || item.cake_name || "";
+      if (item.variant !== exp.variant) {
+        errors.push(`5号肉松小贝：${wechatId}[${i}] 口味应为 ${exp.variant}，实际 ${item.variant}`);
+      }
+      if (item.quantity !== exp.quantity) {
+        errors.push(`5号肉松小贝：${wechatId}[${i}] 数量应为 ${exp.quantity}，实际 ${item.quantity}`);
+      }
+      if (item.unit_price !== exp.price) {
+        errors.push(`5号肉松小贝：${wechatId}[${i}] 单价应为 ${exp.price}，实际 ${item.unit_price}`);
+      }
+      if (!label.includes("肉松小贝一盒三个") || !label.includes(exp.variant)) {
+        errors.push(`5号肉松小贝：${wechatId}[${i}] 商品名应含完整名称，实际 "${label}"`);
+      }
+    }
+  }
+
+  const twoFlavors = [
+    { variant: "原味", quantity: 1, price: 16.9 },
+    { variant: "奶贝", quantity: 1, price: 19.9 },
+  ];
+  assertXiaoBeiLine("Alice", twoFlavors);
+  assertXiaoBeiLine("Bob", twoFlavors);
+  assertXiaoBeiLine("Carol", twoFlavors);
+  assertXiaoBeiLine("Dave", twoFlavors);
+  assertXiaoBeiLine("Eve", [
+    { variant: "原味", quantity: 2, price: 16.9 },
+    { variant: "奶贝", quantity: 1, price: 19.9 },
+  ]);
+  assertXiaoBeiLine("Fay", [{ variant: "芋泥奶贝", quantity: 1, price: 21.9 }]);
+  assertXiaoBeiLine("Grace", [
+    { variant: "奶贝", quantity: 2, price: 19.9 },
+    { variant: "芋泥奶贝", quantity: 1, price: 21.9 },
+  ]);
+
+  const commaProductRelay = `#接龙
+1. 肉松小贝一盒三个（原味/咸蛋黄/芋泥/麻薯/奶贝/芋泥奶贝）16.9/21.9/19.9/19.9/19.9/21.9
+2. 焦糖脆壳香草小泡芙 19.9
+3. 泰奶可可布丁薄脆大泡芙 9.9
+1. Lumi Sweets
+2. Alice 焦糖泡芙，泰奶泡芙`;
+  const cpParsed = parseWechatRelay(commaProductRelay);
+  const aliceCp = cpParsed.orders.find((o) => o.wechat_id === "Alice");
+  if (!aliceCp || aliceCp.status !== "success") {
+    errors.push("逗号商品：Alice 应 success");
+  } else {
+    if (!aliceCp.items.find((i) => (i.cake_name ?? "").includes("焦糖"))) {
+      errors.push("逗号商品：Alice 缺少焦糖泡芙");
+    }
+    if (!aliceCp.items.find((i) => (i.cake_name ?? "").includes("泰奶"))) {
+      errors.push("逗号商品：Alice 缺少泰奶泡芙");
+    }
+    if (aliceCp.items.length !== 2) errors.push("逗号商品：Alice 应有 2 个商品");
+  }
+
+  const menuDefRelay = `#接龙
+5. 肉松小贝一盒三个（原味/咸蛋黄/芋泥/麻薯/奶贝/芋泥奶贝）16.9/21.9/19.9/19.9/19.9/21.9
+2. 玄米焙茶杏子卷 19.9
+1. Lumi Sweets
+2. Alice 2`;
+  const mdParsed = parseWechatRelay(menuDefRelay);
+  const menuOnlyOrder = mdParsed.orders.find(
+    (o) => !o.is_example && o.items.some((i) => (i.cake_name ?? "").includes("肉松小贝"))
+  );
+  if (menuOnlyOrder && menuOnlyOrder.wechat_id !== "Alice") {
+    errors.push("菜单定义行：不应把菜单行 5 识别为客户订单");
+  }
+  const aliceMd = mdParsed.orders.find((o) => o.wechat_id === "Alice");
+  if (!aliceMd?.items.find((i) => i.sku_code === "2")) {
+    errors.push("菜单定义行：Alice 应只订购 SKU2");
+  }
+
   return errors;
 }

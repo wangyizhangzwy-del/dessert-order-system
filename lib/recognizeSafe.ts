@@ -76,7 +76,14 @@ export function getOrderRecordProductName(row: SafeEditableRow): string {
   const displayName = safeStr(row.display_name).trim();
 
   if (sku === "1" && variant) {
-    return displayName || `${variant}小贝`;
+    return displayName.includes(variant)
+      ? displayName
+      : cakeName
+        ? `${cakeName}${variant}`
+        : displayName || `${variant}小贝`;
+  }
+  if (cakeName.includes("肉松小贝") && variant) {
+    return displayName.includes(variant) ? displayName : `${cakeName}${variant}`;
   }
   if (sku === "8" && flavorCombo) {
     const base = cakeName || displayName;

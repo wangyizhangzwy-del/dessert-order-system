@@ -1,11 +1,10 @@
 "use client";
 
-import { FormEvent, useCallback, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
-  getMemorySessionFlag,
-  safeGetSessionStorage,
-  safeSetSessionStorage,
+  readAuthFlag,
   setMemorySessionFlag,
+  writeAuthFlag,
 } from "@/lib/safeStorage";
 
 const SESSION_KEY = "dessert_app_password_ok";
@@ -14,20 +13,31 @@ function configuredPassword(): string {
   return (process.env.NEXT_PUBLIC_APP_PASSWORD ?? "").trim();
 }
 
-function readInitialOk(): boolean {
-  const required = configuredPassword();
-  if (!required) return true;
-  if (getMemorySessionFlag(SESSION_KEY)) return true;
-  return safeGetSessionStorage(SESSION_KEY) === "1";
+function normalizePassword(value: string): string {
+  return value.trim().normalize("NFC");
 }
 
 export function PasswordGate({ children }: { children: React.ReactNode }) {
   const required = configuredPassword();
-  const [ok, setOk] = useState(readInitialOk);
+  // SSR 与首帧保持一致，避免 hydration mismatch（不在 useState 初始值读 storage）。
+  const [ok, setOk] = useState(() => !required);
   const [input, setInput] = useState("");
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+    if (!required) {
+      setOk(true);
+      return;
+    }
+    if (readAuthFlag(SESSION_KEY)) {
+      setOk(true);
+      console.warn("[auth] restored session from storage/memory");
+    }
+  }, [required]);
 
   const handleLogin = useCallback(
     (event?: FormEvent) => {
@@ -47,8 +57,9 @@ export function PasswordGate({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        const entered = input.trim();
-        if (entered !== required) {
+        const entered = normalizePassword(input);
+        const expected = normalizePassword(required);
+        if (entered !== expected) {
           setErr("密码验证失败，请重试。");
           console.warn("[auth] password validation failed");
           return;
@@ -56,12 +67,11 @@ export function PasswordGate({ children }: { children: React.ReactNode }) {
 
         console.warn("[auth] password validation passed");
         setMemorySessionFlag(SESSION_KEY, true);
-        const stored = safeSetSessionStorage(SESSION_KEY, "1");
-        console.warn(`[auth] storage set ${stored ? "success" : "failed"}`);
-
         setOk(true);
         console.warn("[auth] authenticated state updated");
 
+        const stored = writeAuthFlag(SESSION_KEY);
+        console.warn(`[auth] storage set ${stored ? "success" : "failed"}`);
         if (!stored) {
           setNotice("登录状态保存失败，但已允许本次访问。");
         }
@@ -76,6 +86,15 @@ export function PasswordGate({ children }: { children: React.ReactNode }) {
   );
 
   if (!required || ok) return <>{children}</>;
+
+  if (!hydrated) {
+    return (
+      <div className="mx-auto mt-12 max-w-md rounded-xl bg-white p-6 shadow">
+        <h1 className="text-lg font-semibold">请输入访问密码</h1>
+        <p className="mt-3 text-sm text-zinc-500">正在加载...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto mt-12 max-w-md rounded-xl bg-white p-6 shadow">

@@ -103,3 +103,19 @@ export function safeParseJson<T>(raw: string | null, fallback: T): T {
     return fallback;
   }
 }
+
+/** 读取 auth 标记：内存 → sessionStorage → localStorage。 */
+export function readAuthFlag(key: string): boolean {
+  if (getMemorySessionFlag(key)) return true;
+  if (safeGetSessionStorage(key) === "1") return true;
+  if (safeGetLocalStorage(key) === "1") return true;
+  return false;
+}
+
+/** 写入 auth 标记；任一成功即可，全失败也不抛错。 */
+export function writeAuthFlag(key: string): boolean {
+  setMemorySessionFlag(key, true);
+  const sessionOk = safeSetSessionStorage(key, "1");
+  const localOk = safeSetLocalStorage(key, "1");
+  return sessionOk || localOk;
+}

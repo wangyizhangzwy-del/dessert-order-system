@@ -164,6 +164,7 @@ function parseBoxPieceCount(name: string): number | null {
 function comboPieceCount(menuItem: MenuItem | undefined): number | null {
   if (!menuItem) return null;
   if (menuItem.sku_code === "1") return null;
+  if ((menuItem.cake_name ?? "").includes("肉松小贝")) return null;
   if (menuItem.sku_code === "8") return 4;
   if (!menuItem.has_variants) return null;
   return parseBoxPieceCount(menuItem.cake_name);
@@ -523,7 +524,45 @@ function resolveSku1ShortVariant(token: string): string | null {
   return null;
 }
 
-function resolveSku1VariantToken(token: string): { variant: string; quantity: number } | null {
+const SKU1_FLAVOR_ALTERNATION = "(?:芋泥奶贝|咸蛋黄|原味|芋泥|麻薯|奶贝)";
+
+function joinXiaoBeiFlavorNumber(content: string): string {
+  let result = content;
+  for (const prefix of ["1", "5"]) {
+    const flavorThenOne = new RegExp(`(^|\\s)(${SKU1_FLAVOR_ALTERNATION})\\s+${prefix}(?=\\s|$)`, "g");
+    const oneThenFlavor = new RegExp(`(^|\\s)${prefix}\\s+(${SKU1_FLAVOR_ALTERNATION})(?=\\s|$)`, "g");
+    result = result
+      .replace(flavorThenOne, (_, pre, flavor) => `${pre}${flavor}${prefix}`)
+      .replace(oneThenFlavor, (_, pre, flavor) => `${pre}${prefix}${flavor}`);
+  }
+  return result;
+}
+
+/** @deprecated use joinXiaoBeiFlavorNumber */
+const joinSku1FlavorNumber = joinXiaoBeiFlavorNumber;
+
+function findXiaoBeiMenuItem(menu: MenuItem[]): MenuItem {
+  return menu.find((m) => (m.cake_name ?? "").includes("肉松小贝")) ?? makeSku1MenuItem(menu);
+}
+
+function isXiaoBeiMenuItem(menuItem: MenuItem | undefined): boolean {
+  if (!menuItem) return false;
+  return menuItem.sku_code === "1" || (menuItem.cake_name ?? "").includes("肉松小贝");
+}
+
+function matchXiaoBeiVariantName(rest: string): string | null {
+  const norm = normalizeText(rest);
+  if (!norm) return null;
+  const short = SKU1_FLAVOR_SHORTNAMES[norm];
+  if (short) return short;
+  for (const v of SKU1_VARIANT_NAMES) {
+    if (normalizeText(v) === norm) return v;
+  }
+  return resolveSku1ShortVariant(rest);
+}
+
+/** 肉松小贝口味 token：1/5 前缀、短名、纯口味名。 */
+function resolveXiaoBeiVariantToken(token: string): { variant: string; quantity: number } | null {
   const { token: base, quantity } = stripProductQuantitySuffix(token);
   const norm = normalizeText(base);
   if (!norm) return null;
@@ -534,22 +573,54 @@ function resolveSku1VariantToken(token: string): { variant: string; quantity: nu
   const fromResolver = resolveSku1ShortVariant(base);
   if (fromResolver) return { variant: fromResolver, quantity };
 
+  for (const prefix of ["1", "5"]) {
+    const prefixed = base.match(new RegExp(`^${prefix}(?:号|[-－])?(.+)$`));
+    if (prefixed?.[1]) {
+      const variant = matchXiaoBeiVariantName(prefixed[1]);
+      if (variant) return { variant, quantity };
+    }
+    const suffix = base.match(new RegExp(`^(.+)${prefix}$`));
+    if (suffix?.[1]) {
+      const variant = matchXiaoBeiVariantName(suffix[1]);
+      if (variant) return { variant, quantity };
+    }
+  }
+
   const bareVariant = SKU1_VARIANT_NAMES.find((v) => normalizeText(v) === norm);
   if (bareVariant) return { variant: bareVariant, quantity };
 
   return null;
 }
 
-const SKU1_FLAVOR_ALTERNATION = "(?:芋泥奶贝|咸蛋黄|原味|芋泥|麻薯|奶贝)";
+const resolveSku1VariantToken = resolveXiaoBeiVariantToken;
 
-// 把空格分隔的 SKU1 口味与数字 1 合并成一个 token：
-//   “原味 1” => “原味1”，“1 原味” => “1原味”，供后续 SKU1 解析识别。
-function joinSku1FlavorNumber(content: string): string {
-  const flavorThenOne = new RegExp(`(^|\\s)(${SKU1_FLAVOR_ALTERNATION})\\s+1(?=\\s|$)`, "g");
-  const oneThenFlavor = new RegExp(`(^|\\s)1\\s+(${SKU1_FLAVOR_ALTERNATION})(?=\\s|$)`, "g");
-  return content
-    .replace(flavorThenOne, (_, pre, flavor) => `${pre}${flavor}1`)
-    .replace(oneThenFlavor, (_, pre, flavor) => `${pre}1${flavor}`);
+function looksLikeOrderProductFragment(s: string): boolean {
+  const t = normalizeOrderPlusSymbols(s.trim());
+  if (!t || t === "+") return false;
+  if (/^\d+(?:[-–—－]\d+)+$/.test(t)) return true;
+  if (/^\d+$/.test(t)) return true;
+  if (/^(\d+)[xX×][\d]+$/i.test(t)) return true;
+  if (/^(?:1|5)(?:号|[-－])?[\u4e00-\u9fff]/.test(t)) return true;
+  if (/^(\d+)[^\d\s]+/.test(t)) return true;
+  if (/[\u4e00-\u9fff]/.test(t) && !isLikelyNoteText(t)) return true;
+  return false;
+}
+
+/** 逗号/顿号连接的商品转为 +，不误拆地址备注。 */
+function expandCommaProductSeparators(input: string): string {
+  let out = input;
+  let prev = "";
+  const pattern = /([^\s，,、+（(]+)\s*[，,、]\s*([^\s，,、+）)]+)/;
+  while (prev !== out) {
+    prev = out;
+    out = out.replace(pattern, (full, left: string, right: string) => {
+      if (looksLikeOrderProductFragment(left) && looksLikeOrderProductFragment(right)) {
+        return `${left.trim()}+${right.trim()}`;
+      }
+      return full;
+    });
+  }
+  return out;
 }
 
 function makeSku1MenuItem(menu: MenuItem[]): MenuItem {
@@ -575,22 +646,26 @@ function orderItemFromSku(
 ): { item?: OrderItem; warning?: string } {
   if (quantity <= 0) return { warning: `无效数量 ${quantity}` };
 
-  if (menuItem.sku_code === "1") {
-    const sku1 = makeSku1MenuItem([menuItem]);
+  if (isXiaoBeiMenuItem(menuItem)) {
+    const sku1 =
+      menuItem.variants?.length && (menuItem.cake_name ?? "").includes("肉松小贝")
+        ? menuItem
+        : makeSku1MenuItem([menuItem]);
     const variantName = variantInput?.trim() || sku1.default_variant || "原味";
     const variant =
       sku1.variants?.find((v) => normalizeText(v.variant_name) === normalizeText(variantName)) ??
       (SKU1_FALLBACK_VARIANT_PRICES[variantName]
         ? { variant_name: variantName, price: SKU1_FALLBACK_VARIANT_PRICES[variantName] }
         : undefined);
-    if (!variant) return { warning: `SKU 1 口味 "${variantName}" 无法识别` };
+    if (!variant) return { warning: `肉松小贝口味 "${variantName}" 无法识别` };
     const line_total = roundMoney(variant.price * quantity);
+    const cakeName = "肉松小贝一盒三个";
     return {
       item: {
-        sku_code: "1",
+        sku_code: sku1.sku_code,
         variant: variant.variant_name,
-        cake_name: "肉松小贝一盒三个",
-        display_name: `${variant.variant_name}小贝`,
+        cake_name: cakeName,
+        display_name: `${cakeName}${variant.variant_name}`,
         quantity,
         unit_price: variant.price,
         line_total,
@@ -678,9 +753,9 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
   const comboAcc = new Map<string, { menuItem: MenuItem; flavors: string[] }>();
 
   for (const part of parts) {
-    const sku1Resolved = resolveSku1VariantToken(part);
+    const sku1Resolved = resolveXiaoBeiVariantToken(part);
     if (sku1Resolved) {
-      const sku1Item = menu.find((it) => it.sku_code === "1") ?? makeSku1MenuItem(menu);
+      const sku1Item = findXiaoBeiMenuItem(menu);
       const parsed = orderItemFromSku(sku1Item, sku1Resolved.quantity, sku1Resolved.variant);
       if (parsed.item) allItems.push(parsed.item);
       if (parsed.warning) warnings.push(parsed.warning);
@@ -835,7 +910,9 @@ function orderTokenBase(token: string): string {
 }
 
 function parseSingleOrder(line: string, menu: MenuItem[]): ParsedOrder {
-  const content = joinSku1FlavorNumber(line.replace(ORDER_LINE_RE, "").trim());
+  const content = expandCommaProductSeparators(
+    joinXiaoBeiFlavorNumber(line.replace(ORDER_LINE_RE, "").trim())
+  );
   const parts = content.split(/\s+/).filter(Boolean);
   const maxSku = Math.max(...menu.map((m) => Number(m.sku_code)), 0);
   const canBeOrderStart = (token: string): boolean => {
@@ -903,9 +980,9 @@ function parseSingleOrder(line: string, menu: MenuItem[]): ParsedOrder {
     if (token === "+") return false;
     if (/^.+的1$/.test(token)) return true;
     if (token.includes("+")) return true;
+    if (resolveXiaoBeiVariantToken(token)) return true;
     const mm = token.match(/^(\d+)(.*)$/);
     if (!mm) {
-      if (resolveSku1VariantToken(token)) return true;
       const base = orderTokenBase(token);
       if (resolveSku1ShortVariant(base)) return true;
       return hasCjk(base) && !isLikelyNoteText(base) && matchProductNameToMenuItem(base, menu).matched;
