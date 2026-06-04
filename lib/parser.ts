@@ -163,7 +163,7 @@ function parseBoxPieceCount(name: string): number | null {
 // SKU 1 固定为一盒一口味（多口味=多盒），永不视为组合盒。
 function comboPieceCount(menuItem: MenuItem | undefined): number | null {
   if (!menuItem) return null;
-  if (menuItem.sku_code === "1") return null;
+  if (menuItem.sku_code === "8") return 4;
   if ((menuItem.cake_name ?? "").includes("肉松小贝")) return null;
   if (menuItem.sku_code === "8") return 4;
   if (!menuItem.has_variants) return null;
@@ -183,28 +183,62 @@ function distributeComboFlavors(flavors: string[], pieceCount: number): string[]
   return out;
 }
 
+function extractMenuPrices(body: string): number[] {
+  const withoutLimitNotes = body.replace(
+    /[（(][^）)]*(?:限量|仅剩|限)\s*\d+[^）)]*[）)]/g,
+    ""
+  );
+
+  const slashUnitPrices =
+    withoutLimitNotes
+      .match(/\d+(?:\.\d+)?\s*\/\s*[块个盒份]/g)
+      ?.map((m) => Number(m.match(/\d+(?:\.\d+)?/)?.[0] ?? 0))
+      .filter((n) => n > 0) ?? [];
+  if (slashUnitPrices.length > 0) return slashUnitPrices;
+
+  const decimalPrices = withoutLimitNotes.match(/\d+\.\d+/g)?.map(Number) ?? [];
+  if (decimalPrices.length > 0) return decimalPrices;
+
+  const trailing = withoutLimitNotes.match(/(\d+(?:\.\d+)?)\s*$/);
+  if (trailing) return [Number(trailing[1])];
+
+  return (body.match(PRICE_RE) ?? []).map(Number);
+}
+
+function cleanMenuProductName(name: string): string {
+  return name
+    .replace(/\d+\.\d+(?:\s*\/\s*[块个盒份])?/g, " ")
+    .replace(/\d+(?:\.\d+)?\s*(?:\/\s*\d+(?:\.\d+)?)+\s*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function parseMenuItem(line: string): MenuItem | null {
   const match = line.match(/^\s*(\d+)\.\s*(.+)$/);
   if (!match) return null;
   const sku = match[1];
   const body = match[2];
-  const prices = (body.match(PRICE_RE) ?? []).map((p) => Number(p));
+  const prices = extractMenuPrices(body);
   const variantsMatch = body.match(/[（(]([^）)]+)[）)]/);
   const variantNames = variantsMatch
-    ? variantsMatch[1].split("/").map((v) => v.trim()).filter(Boolean)
+    ? variantsMatch[1]
+        .split("/")
+        .map((v) => v.trim())
+        .filter((v) => v && !/^\d+$/.test(v) && !/限量|块|个/.test(v))
     : [];
 
-  const name = body
-    .replace(/[（(][^）)]+[）)]/g, "")
-    .replace(/\d+(?:\.\d+)?(?:\s*\/\s*[个盒份])?\s*$/g, "")
-    .replace(/\d+(?:\.\d+)?\s*(?:\/\s*\d+(?:\.\d+)?)+\s*$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const name = cleanMenuProductName(
+    body
+      .replace(/[（(][^）)]+[）)]/g, "")
+      .replace(/\d+(?:\.\d+)?(?:\s*\/\s*[个盒份])?\s*$/g, "")
+      .replace(/\d+(?:\.\d+)?\s*(?:\/\s*\d+(?:\.\d+)?)+\s*$/g, "")
+  );
 
   if (!name) return null;
 
   // “一盒四个（口味/口味/...）”这类组合盒即使只有一个价格，也按多口味组合盒处理（同 SKU 8）。
-  const isComboBox = sku !== "1" && parseBoxPieceCount(name) !== null;
+  const isComboBox = !isXiaoBeiMenuItem({ sku_code: sku, cake_name: name, has_variants: false, price: 0 }) &&
+    parseBoxPieceCount(name) !== null;
   if (variantNames.length > 1 && (prices.length >= variantNames.length || sku === "8" || isComboBox)) {
     const variants = variantNames.map((variant_name, idx) => ({
       variant_name,
@@ -224,7 +258,7 @@ function parseMenuItem(line: string): MenuItem | null {
     sku_code: sku,
     cake_name: name,
     has_variants: false,
-    price: prices[prices.length - 1] ?? 0,
+    price: prices[0] ?? 0,
   };
 }
 
@@ -306,7 +340,7 @@ function matchProductNameToMenuItem(
   if (k.length < 2) return { ambiguous: false, matched: false };
 
   const candidates = menu
-    .filter((m) => m.sku_code !== "1" && m.sku_code !== "8")
+    .filter((m) => m.sku_code !== "8" && !(m.cake_name ?? "").includes("肉松小贝"))
     .map((m) => ({ m, c: normalizeProductKeyword(m.cake_name) }))
     .filter((x) => x.c.length > 0);
 
@@ -526,9 +560,11 @@ function resolveSku1ShortVariant(token: string): string | null {
 
 const SKU1_FLAVOR_ALTERNATION = "(?:芋泥奶贝|咸蛋黄|原味|芋泥|麻薯|奶贝)";
 
-function joinXiaoBeiFlavorNumber(content: string): string {
+function joinXiaoBeiFlavorNumber(content: string, menu: MenuItem[]): string {
+  const prefixes = xiaoBeiDigitPrefixes(menu);
+  if (prefixes.length === 0) return content;
   let result = content;
-  for (const prefix of ["1", "5"]) {
+  for (const prefix of prefixes) {
     const flavorThenOne = new RegExp(`(^|\\s)(${SKU1_FLAVOR_ALTERNATION})\\s+${prefix}(?=\\s|$)`, "g");
     const oneThenFlavor = new RegExp(`(^|\\s)${prefix}\\s+(${SKU1_FLAVOR_ALTERNATION})(?=\\s|$)`, "g");
     result = result
@@ -541,13 +577,22 @@ function joinXiaoBeiFlavorNumber(content: string): string {
 /** @deprecated use joinXiaoBeiFlavorNumber */
 const joinSku1FlavorNumber = joinXiaoBeiFlavorNumber;
 
-function findXiaoBeiMenuItem(menu: MenuItem[]): MenuItem {
-  return menu.find((m) => (m.cake_name ?? "").includes("肉松小贝")) ?? makeSku1MenuItem(menu);
+function findXiaoBeiMenuItem(menu: MenuItem[]): MenuItem | undefined {
+  return menu.find((m) => (m.cake_name ?? "").includes("肉松小贝"));
 }
 
 function isXiaoBeiMenuItem(menuItem: MenuItem | undefined): boolean {
   if (!menuItem) return false;
-  return menuItem.sku_code === "1" || (menuItem.cake_name ?? "").includes("肉松小贝");
+  return (menuItem.cake_name ?? "").includes("肉松小贝");
+}
+
+/** 肉松小贝口味数字前缀：本次菜单中肉松小贝的 SKU，以及常用的 5 缩写。 */
+function xiaoBeiDigitPrefixes(menu: MenuItem[]): string[] {
+  const item = findXiaoBeiMenuItem(menu);
+  if (!item) return [];
+  const prefixes = new Set<string>([item.sku_code]);
+  if (item.sku_code !== "5") prefixes.add("5");
+  return [...prefixes];
 }
 
 function matchXiaoBeiVariantName(rest: string): string | null {
@@ -561,8 +606,13 @@ function matchXiaoBeiVariantName(rest: string): string | null {
   return resolveSku1ShortVariant(rest);
 }
 
-/** 肉松小贝口味 token：1/5 前缀、短名、纯口味名。 */
-function resolveXiaoBeiVariantToken(token: string): { variant: string; quantity: number } | null {
+/** 肉松小贝口味 token：菜单含肉松小贝时，按本次 SKU / 5 缩写识别。 */
+function resolveXiaoBeiVariantToken(
+  token: string,
+  menu: MenuItem[]
+): { variant: string; quantity: number } | null {
+  if (!findXiaoBeiMenuItem(menu)) return null;
+
   const { token: base, quantity } = stripProductQuantitySuffix(token);
   const norm = normalizeText(base);
   if (!norm) return null;
@@ -573,7 +623,7 @@ function resolveXiaoBeiVariantToken(token: string): { variant: string; quantity:
   const fromResolver = resolveSku1ShortVariant(base);
   if (fromResolver) return { variant: fromResolver, quantity };
 
-  for (const prefix of ["1", "5"]) {
+  for (const prefix of xiaoBeiDigitPrefixes(menu)) {
     const prefixed = base.match(new RegExp(`^${prefix}(?:号|[-－])?(.+)$`));
     if (prefixed?.[1]) {
       const variant = matchXiaoBeiVariantName(prefixed[1]);
@@ -591,8 +641,6 @@ function resolveXiaoBeiVariantToken(token: string): { variant: string; quantity:
 
   return null;
 }
-
-const resolveSku1VariantToken = resolveXiaoBeiVariantToken;
 
 function looksLikeOrderProductFragment(s: string): boolean {
   const t = normalizeOrderPlusSymbols(s.trim());
@@ -623,19 +671,21 @@ function expandCommaProductSeparators(input: string): string {
   return out;
 }
 
-function makeSku1MenuItem(menu: MenuItem[]): MenuItem {
-  const inMenu = menu.find((m) => m.sku_code === "1");
+function makeSku1MenuItem(menu: MenuItem[]): MenuItem | undefined {
+  const inMenu = findXiaoBeiMenuItem(menu);
   if (inMenu?.variants?.length) return inMenu;
-  return {
-    sku_code: "1",
-    cake_name: "肉松小贝一盒三个",
-    has_variants: true,
-    default_variant: "原味",
-    variants: Object.entries(SKU1_FALLBACK_VARIANT_PRICES).map(([variant_name, price]) => ({
-      variant_name,
-      price,
-    })),
-  };
+  if (inMenu) {
+    return {
+      ...inMenu,
+      has_variants: true,
+      default_variant: "原味",
+      variants: Object.entries(SKU1_FALLBACK_VARIANT_PRICES).map(([variant_name, price]) => ({
+        variant_name,
+        price,
+      })),
+    };
+  }
+  return undefined;
 }
 
 function orderItemFromSku(
@@ -647,10 +697,9 @@ function orderItemFromSku(
   if (quantity <= 0) return { warning: `无效数量 ${quantity}` };
 
   if (isXiaoBeiMenuItem(menuItem)) {
-    const sku1 =
-      menuItem.variants?.length && (menuItem.cake_name ?? "").includes("肉松小贝")
-        ? menuItem
-        : makeSku1MenuItem([menuItem]);
+    const sku1 = menuItem.variants?.length
+      ? menuItem
+      : makeSku1MenuItem([menuItem]) ?? menuItem;
     const variantName = variantInput?.trim() || sku1.default_variant || "原味";
     const variant =
       sku1.variants?.find((v) => normalizeText(v.variant_name) === normalizeText(variantName)) ??
@@ -659,7 +708,7 @@ function orderItemFromSku(
         : undefined);
     if (!variant) return { warning: `肉松小贝口味 "${variantName}" 无法识别` };
     const line_total = roundMoney(variant.price * quantity);
-    const cakeName = "肉松小贝一盒三个";
+    const cakeName = cleanMenuProductName(sku1.cake_name ?? "") || "肉松小贝一盒三个";
     return {
       item: {
         sku_code: sku1.sku_code,
@@ -753,10 +802,10 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
   const comboAcc = new Map<string, { menuItem: MenuItem; flavors: string[] }>();
 
   for (const part of parts) {
-    const sku1Resolved = resolveXiaoBeiVariantToken(part);
-    if (sku1Resolved) {
-      const sku1Item = findXiaoBeiMenuItem(menu);
-      const parsed = orderItemFromSku(sku1Item, sku1Resolved.quantity, sku1Resolved.variant);
+    const xiaoBeiItem = findXiaoBeiMenuItem(menu);
+    const sku1Resolved = xiaoBeiItem ? resolveXiaoBeiVariantToken(part, menu) : null;
+    if (sku1Resolved && xiaoBeiItem) {
+      const parsed = orderItemFromSku(xiaoBeiItem, sku1Resolved.quantity, sku1Resolved.variant);
       if (parsed.item) allItems.push(parsed.item);
       if (parsed.warning) warnings.push(parsed.warning);
       continue;
@@ -787,7 +836,7 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
     const tailQty = stripProductQuantitySuffix(tail);
     tail = tailQty.token;
     const itemQty = tailQty.quantity;
-    const skuItem = menu.find((it) => it.sku_code === String(n)) ?? (n === 1 ? makeSku1MenuItem(menu) : undefined);
+    const skuItem = menu.find((it) => it.sku_code === String(n));
 
     if (!tail) {
       if (!skuItem) {
@@ -814,19 +863,19 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
       continue;
     }
 
-    if (skuItem?.sku_code === "1") {
+    if (isXiaoBeiMenuItem(skuItem)) {
       const bracketVariants = splitSku1BracketVariants(tail);
       if (bracketVariants.length > 0) {
         bracketVariants.forEach((variantName) => {
-          const parsed = orderItemFromSku(skuItem, itemQty, variantName);
+          const parsed = orderItemFromSku(skuItem!, itemQty, variantName);
           if (parsed.item) allItems.push(parsed.item);
           if (parsed.warning) warnings.push(parsed.warning);
         });
         continue;
       }
-      const sku1Tail = resolveSku1VariantToken(`${n}${tail}`);
+      const sku1Tail = resolveXiaoBeiVariantToken(`${n}${tail}`, menu);
       if (sku1Tail) {
-        const parsed = orderItemFromSku(skuItem, sku1Tail.quantity, sku1Tail.variant);
+        const parsed = orderItemFromSku(skuItem!, sku1Tail.quantity, sku1Tail.variant);
         if (parsed.item) allItems.push(parsed.item);
         if (parsed.warning) warnings.push(parsed.warning);
         continue;
@@ -911,7 +960,7 @@ function orderTokenBase(token: string): string {
 
 function parseSingleOrder(line: string, menu: MenuItem[]): ParsedOrder {
   const content = expandCommaProductSeparators(
-    joinXiaoBeiFlavorNumber(line.replace(ORDER_LINE_RE, "").trim())
+    joinXiaoBeiFlavorNumber(line.replace(ORDER_LINE_RE, "").trim(), menu)
   );
   const parts = content.split(/\s+/).filter(Boolean);
   const maxSku = Math.max(...menu.map((m) => Number(m.sku_code)), 0);
@@ -927,7 +976,7 @@ function parseSingleOrder(line: string, menu: MenuItem[]): ParsedOrder {
     if (mul) return Number(mul[1]) > 0 && Number(mul[1]) <= maxSku; // 2*2 / 11x3 数量乘法
     if (/^\d+$/.test(token)) return Number(token) > 0 && Number(token) <= maxSku;
     if (/^\d+[^\d\s]+$/.test(token)) return true; // 1芋泥, 8（抹茶/..）
-    if (resolveSku1VariantToken(token)) return true;
+    if (resolveXiaoBeiVariantToken(token, menu)) return true;
     if (resolveSku1ShortVariant(orderTokenBase(token))) return true; // 原味小贝 / 奶贝 ...
     // 产品名直接点单：焙茶草莓达克瓦滋 / 焦糖小泡芙 / 咸蛋黄x2
     const productBase = orderTokenBase(token);
@@ -980,7 +1029,7 @@ function parseSingleOrder(line: string, menu: MenuItem[]): ParsedOrder {
     if (token === "+") return false;
     if (/^.+的1$/.test(token)) return true;
     if (token.includes("+")) return true;
-    if (resolveXiaoBeiVariantToken(token)) return true;
+    if (resolveXiaoBeiVariantToken(token, menu)) return true;
     const mm = token.match(/^(\d+)(.*)$/);
     if (!mm) {
       const base = orderTokenBase(token);

@@ -683,5 +683,34 @@ export function runParserRegressionChecks(): string[] {
     errors.push("菜单定义行：Alice 应只订购 SKU2");
   }
 
+  const fluidSku1Relay = `#接龙
+1. 罗勒桃子夏洛特 26.9/块（限量6块）
+2. 玄米焙茶杏子卷 19.9
+1. Lumi Sweets
+2. Alice 1
+3. Bob 1原味+2`;
+  const fsParsed = parseWechatRelay(fluidSku1Relay);
+  const sku1Menu = fsParsed.menu_items.find((m) => m.sku_code === "1");
+  if (!sku1Menu || sku1Menu.price !== 26.9) {
+    errors.push(`流动 SKU1：菜单 1 号价格应为 26.9，实际 ${sku1Menu?.price}`);
+  }
+  if (sku1Menu?.cake_name !== "罗勒桃子夏洛特") {
+    errors.push(`流动 SKU1：菜单 1 号名称应为 罗勒桃子夏洛特，实际 ${sku1Menu?.cake_name}`);
+  }
+  const aliceFs = fsParsed.orders.find((o) => o.wechat_id === "Alice");
+  if (!aliceFs?.items.find((i) => i.sku_code === "1" && i.unit_price === 26.9)) {
+    errors.push("流动 SKU1：Alice 订购 1 应为罗勒桃子夏洛特 26.9");
+  }
+  if (aliceFs?.items.some((i) => (i.cake_name ?? "").includes("肉松小贝"))) {
+    errors.push("流动 SKU1：Alice 订购 1 不应识别为肉松小贝");
+  }
+  const bobFs = fsParsed.orders.find((o) => o.wechat_id === "Bob");
+  if (!bobFs?.items.find((i) => i.sku_code === "2")) {
+    errors.push("流动 SKU1：Bob 应能订购 SKU2");
+  }
+  if (bobFs?.items.some((i) => (i.cake_name ?? "").includes("肉松小贝"))) {
+    errors.push("流动 SKU1：无肉松小贝菜单时不应识别肉松小贝");
+  }
+
   return errors;
 }
