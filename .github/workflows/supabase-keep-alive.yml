@@ -1,0 +1,15 @@
+name: Supabase Keep Alive
+
+on:
+  schedule:
+    # 每周一、三、五 12:00 UTC 访问 production keep-alive endpoint
+    - cron: "0 12 * * 1,3,5"
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping keep-alive endpoint
+        run: |
+          curl -fsS "https://dessert-order-system.vercel.app/api/keep-alive"
