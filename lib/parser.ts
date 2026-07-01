@@ -239,7 +239,11 @@ function parseMenuItem(line: string): MenuItem | null {
   // “一盒四个（口味/口味/...）”这类组合盒即使只有一个价格，也按多口味组合盒处理（同 SKU 8）。
   const isComboBox = !isXiaoBeiMenuItem({ sku_code: sku, cake_name: name, has_variants: false, price: 0 }) &&
     parseBoxPieceCount(name) !== null;
-  if (variantNames.length > 1 && (prices.length >= variantNames.length || sku === "8" || isComboBox)) {
+  // 多口味选项：多个价格（如肉松小贝）或单一价格（如 9号 乌龙茶/香草 同价）均视为 has_variants。
+  if (
+    variantNames.length > 1 &&
+    (prices.length >= variantNames.length || prices.length >= 1 || sku === "8" || isComboBox)
+  ) {
     const variants = variantNames.map((variant_name, idx) => ({
       variant_name,
       price: prices[idx] ?? prices[0] ?? 0,
