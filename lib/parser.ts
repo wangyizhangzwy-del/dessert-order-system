@@ -398,6 +398,22 @@ function extractVariantsFromText(tail: string, menuItem: MenuItem): string[] {
   return picked;
 }
 
+function hasUniformVariantPrices(menuItem: MenuItem): boolean {
+  const variants = menuItem.variants;
+  if (!variants || variants.length < 2) return false;
+  const base = variants[0].price;
+  return variants.every((v) => v.price === base);
+}
+
+/** 去掉 SKU 口味尾巴前的连接符/“号”，如 -香草、号香草。 */
+function stripSkuFlavorTailPrefix(tail: string): string {
+  return tail.replace(/^[-–—－]+/, "").replace(/^号[-–—－]?/, "").trim();
+}
+
+function resolveVariantDisplayName(cakeName: string, variantName: string): string {
+  return `${cakeName}${variantName}`;
+}
+
 function parseSku8FlavorCombo(tail: string, sku8: MenuItem): string[] {
   const allowed = sku8.variants ?? [];
   if (allowed.length === 0) return [];
@@ -746,7 +762,21 @@ function orderItemFromSku(
   }
 
   if (menuItem.has_variants) {
-    const variantName = variantInput?.trim() || menuItem.default_variant || "原味";
+    const trimmedVariant = variantInput?.trim();
+    if (!trimmedVariant && hasUniformVariantPrices(menuItem)) {
+      const unitPrice = menuItem.price ?? menuItem.variants?.[0]?.price ?? 0;
+      return {
+        item: {
+          sku_code: menuItem.sku_code,
+          cake_name: menuItem.cake_name,
+          display_name: menuItem.cake_name,
+          quantity,
+          unit_price: unitPrice,
+          line_total: roundMoney(unitPrice * quantity),
+        },
+      };
+    }
+    const variantName = trimmedVariant || menuItem.default_variant || "原味";
     const variant = menuItem.variants?.find(
       (v) => normalizeText(v.variant_name) === normalizeText(variantName)
     );
@@ -759,7 +789,9 @@ function orderItemFromSku(
         sku_code: menuItem.sku_code,
         variant: variant.variant_name,
         cake_name: menuItem.cake_name,
-        display_name: `${menuItem.cake_name} ${variant.variant_name}`,
+        display_name: trimmedVariant
+          ? resolveVariantDisplayName(menuItem.cake_name ?? "", variant.variant_name)
+          : `${menuItem.cake_name} ${variant.variant_name}`,
         quantity,
         unit_price: variant.price,
         line_total,
@@ -838,7 +870,7 @@ function parseOrderToken(token: string, menu: MenuItem[]): { items: OrderItem[];
     const n = Number(m[1]);
     let tail = m[2].trim();
     const tailQty = stripProductQuantitySuffix(tail);
-    tail = tailQty.token;
+    tail = stripSkuFlavorTailPrefix(tailQty.token);
     const itemQty = tailQty.quantity;
     const skuItem = menu.find((it) => it.sku_code === String(n));
 

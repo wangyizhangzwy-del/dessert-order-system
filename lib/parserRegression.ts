@@ -712,14 +712,113 @@ export function runParserRegressionChecks(): string[] {
     errors.push("流动 SKU1：无肉松小贝菜单时不应识别肉松小贝");
   }
 
-  // SKU 9 多口味同价：9香草 / 9(香草) 表示 9 号商品选香草口味（非独立商品名）
-  const sku9FlavorRelay = `#接龙
-1. 肉松小贝一盒三个（原味/咸蛋黄/芋泥/麻薯/奶贝/芋泥奶贝）16.9/21.9/19.9/19.9/19.9/21.9
-2. 龙井茶斑斓椰椰菠萝切块 24.9
-3. 抹茶茉莉奶冻卷 19.9
+  // SKU 9 多口味同价：基础 SKU 识别 + 9香草 / 9(香草) 等口味写法
+  const sku9MenuRelay = `#接龙
+9. 焦糖脆壳小泡芙（乌龙茶/香草）20.9/盒
 4. 泰茶咸法酪布蕾切块 24.9
+12. 百香果榛子泡芙 12.9
+2. 龙井茶斑斓椰椰菠萝切块 24.9
+1. Lumi Sweets 1+2+3`;
+  const sku9MenuParsed = parseWechatRelay(sku9MenuRelay);
+  const sku9MenuItem = sku9MenuParsed.menu_items.find((m) => m.sku_code === "9");
+  if (!sku9MenuItem) errors.push("SKU9 菜单行：menuMap[9] 不存在");
+  if (!sku9MenuItem?.has_variants) errors.push("SKU9 菜单行：应识别为 has_variants");
+  if (sku9MenuItem?.cake_name !== "焦糖脆壳小泡芙") {
+    errors.push(`SKU9 菜单行：baseName 应为焦糖脆壳小泡芙，实际 ${sku9MenuItem?.cake_name}`);
+  }
+  if (!sku9MenuItem?.variants?.some((v) => v.variant_name === "香草" && v.price === 20.9)) {
+    errors.push("SKU9 菜单行：香草口味价格应为 20.9");
+  }
+  if (!sku9MenuItem?.variants?.some((v) => v.variant_name === "乌龙茶" && v.price === 20.9)) {
+    errors.push("SKU9 菜单行：乌龙茶口味价格应为 20.9");
+  }
+
+  const sku9OrderRelay = `${sku9MenuRelay}
+2. Sarah 9
+3. Amy 9+4
+4. Lily 9香草+4
+5. Momo 9(香草)+12
+6. T 9乌龙茶
+7. U 9-香草
+8. V 9号香草
+9. W 9香草x2
+10. X 2+4+9+12
+13. Sarah 9香草+4`;
+  const sku9Parsed = parseWechatRelay(sku9OrderRelay);
+
+  const sarahPlain = sku9Parsed.orders.find((o) => o.wechat_id === "Sarah");
+  const sarahPlain9 = sarahPlain?.items.find((i) => i.sku_code === "9");
+  if (!sarahPlain9 || sarahPlain9.cake_name !== "焦糖脆壳小泡芙") {
+    errors.push("Sarah 9：应识别焦糖脆壳小泡芙");
+  }
+  if (sarahPlain9?.unit_price !== 20.9) errors.push("Sarah 9：单价应为 20.9");
+  if (sarahPlain9?.variant) errors.push("Sarah 9：未指定口味时不应写入 variant");
+  if (sarahPlain9?.display_name !== "焦糖脆壳小泡芙") {
+    errors.push(`Sarah 9：display_name 应为焦糖脆壳小泡芙，实际 ${sarahPlain9?.display_name}`);
+  }
+
+  const amy = sku9Parsed.orders.find((o) => o.wechat_id === "Amy");
+  if (!amy || amy.items.length !== 2) errors.push("Amy 9+4：应有 2 个商品");
+  if (!amy?.items.find((i) => i.sku_code === "9")) errors.push("Amy 9+4：缺少 SKU9");
+  if (!amy?.items.find((i) => i.sku_code === "4")) errors.push("Amy 9+4：缺少 SKU4");
+
+  const lily = sku9Parsed.orders.find((o) => o.wechat_id === "Lily");
+  const lily9 = lily?.items.find((i) => i.sku_code === "9");
+  if (!lily9?.display_name.includes("焦糖脆壳小泡芙香草")) {
+    errors.push(`Lily 9香草+4：应含焦糖脆壳小泡芙香草，实际 ${lily9?.display_name}`);
+  }
+  if (!lily?.items.find((i) => i.sku_code === "4")) errors.push("Lily 9香草+4：缺少 SKU4");
+
+  const momo = sku9Parsed.orders.find((o) => o.wechat_id === "Momo");
+  const momo9 = momo?.items.find((i) => i.sku_code === "9");
+  if (!momo9?.display_name.includes("焦糖脆壳小泡芙香草")) {
+    errors.push("Momo 9(香草)+12：应识别 SKU9 香草");
+  }
+  if (!momo?.items.find((i) => i.sku_code === "12")) errors.push("Momo 9(香草)+12：缺少 SKU12");
+
+  const tOolong = sku9Parsed.orders.find((o) => o.wechat_id === "T");
+  if (!tOolong?.items.find((i) => i.sku_code === "9" && i.variant === "乌龙茶")) {
+    errors.push("9乌龙茶：应识别 SKU9 乌龙茶");
+  }
+  const uDash = sku9Parsed.orders.find((o) => o.wechat_id === "U");
+  if (!uDash?.items.find((i) => i.sku_code === "9" && i.variant === "香草")) {
+    errors.push("9-香草：应识别 SKU9 香草");
+  }
+  const vHao = sku9Parsed.orders.find((o) => o.wechat_id === "V");
+  if (!vHao?.items.find((i) => i.sku_code === "9" && i.variant === "香草")) {
+    errors.push("9号香草：应识别 SKU9 香草");
+  }
+  const wQty = sku9Parsed.orders.find((o) => o.wechat_id === "W");
+  const w9 = wQty?.items.find((i) => i.sku_code === "9");
+  if (!w9 || w9.quantity !== 2 || w9.variant !== "香草") {
+    errors.push("9香草x2：应为 SKU9 香草 qty 2");
+  }
+
+  const xCombo = sku9Parsed.orders.find((o) => o.wechat_id === "X");
+  if (!xCombo?.items.find((i) => i.sku_code === "2")) errors.push("2+4+9+12：缺少 SKU2");
+  if (!xCombo?.items.find((i) => i.sku_code === "4")) errors.push("2+4+9+12：缺少 SKU4");
+  if (!xCombo?.items.find((i) => i.sku_code === "9")) errors.push("2+4+9+12：缺少 SKU9");
+  if (!xCombo?.items.find((i) => i.sku_code === "12")) errors.push("2+4+9+12：缺少 SKU12");
+
+  const yLine = sku9Parsed.orders.find((o) => o.raw_line === "13. Sarah 9香草+4");
+  if (!yLine) errors.push("13. Sarah 9香草+4：应识别客户 Sarah");
+  if (yLine?.items.find((i) => i.sku_code === "13")) {
+    errors.push("13. Sarah 9香草+4：不应把订单序号 13 当商品");
+  }
+  if (!yLine?.items.find((i) => i.sku_code === "9" && i.variant === "香草")) {
+    errors.push("13. Sarah 9香草+4：应识别 SKU9 香草");
+  }
+
+  const sku9FullRelay = `#接龙
+时间： 周三晚上8点左右配送（dt满40/kt满60可送）自取/需要提前取的宝子请私信
+地点： Atelier
+付款方式： siqiwang228@gmail.com（付款完麻烦私信我截图～）
+1. 肉松小贝一盒三个（原味/咸蛋黄/芋泥/麻薯/奶贝/芋泥奶贝）16.9/21.9/19.9/19.9/19.9/21.9
+2. 龙井茶斑斓椰椰菠萝切块 24.9 （限量7块）
+3. 抹茶茉莉奶冻卷 19.9
+4. 泰茶咸法酪布蕾切块 24.9 （限量7块）
 5. 火腿黑松露流心巴斯克19.9
-6. 番茄辣松咸蛋黄玉米盒子 22.9
+6. 番茄辣松咸蛋黄玉米盒子 22.9 （限量10个）
 7. 酱多多芋泥麻薯奶酱盒子 19.9
 8. 牛油酥皮小泡芙一盒四个  （原味/抹茶/黑芝麻/巧克力/焙茶） 26.9
 9. 焦糖脆壳小泡芙（乌龙茶/香草）20.9/盒
@@ -729,33 +828,36 @@ export function runParserRegressionChecks(): string[] {
 13. 开心果酥粒泡芙 12.9
 14. 满40可购蛋糕盲盒 8.8
 1. Lumi Sweets 1+2+3
-2. 么么 2+4+9(香草)+12+14+6
-3. Sarah 9香草+4
-4. imnotalice_🙀 9香草`;
-  const s9Parsed = parseWechatRelay(sku9FlavorRelay);
-  const sku9Menu = s9Parsed.menu_items.find((m) => m.sku_code === "9");
-  if (!sku9Menu?.has_variants) errors.push("SKU9 菜单应识别为多口味 has_variants");
-  if (!sku9Menu?.variants?.some((v) => v.variant_name === "香草")) {
-    errors.push("SKU9 菜单应含香草口味");
+2. Yuisum 2+4+10
+10. 么么 2+4+9(香草)+12+14+6
+13. Sarah 9香草+4
+17. imnotalice_🙀 9香草`;
+  const s9Full = parseWechatRelay(sku9FullRelay);
+  if (s9Full.menu_items.length !== 14) {
+    errors.push(`完整接龙：菜单应有 14 项，实际 ${s9Full.menu_items.length}`);
   }
-  const momo = s9Parsed.orders.find((o) => o.wechat_id === "么么");
-  const momoSku9 = momo?.items.find((i) => i.sku_code === "9");
-  if (!momoSku9 || momoSku9.variant !== "香草") {
-    errors.push("么么 9(香草) 应识别为 SKU9 香草口味");
+  if (s9Full.orders.some((o) => o.wechat_id === "焦糖脆壳小泡芙")) {
+    errors.push("完整接龙：菜单行 9 不应作为客户订单");
   }
-  if (momo?.status !== "success") errors.push("么么 订单状态应为 success");
-  const sarahS9 = s9Parsed.orders.find((o) => o.wechat_id === "Sarah");
-  const sarahSku9 = sarahS9?.items.find((i) => i.sku_code === "9");
-  if (!sarahSku9 || sarahSku9.variant !== "香草") {
-    errors.push("Sarah 9香草 应识别为 SKU9 香草口味");
+  const momoFull = s9Full.orders.find((o) => o.wechat_id === "么么");
+  const momoFull9 = momoFull?.items.find((i) => i.sku_code === "9");
+  if (!momoFull9?.display_name.includes("焦糖脆壳小泡芙香草")) {
+    errors.push("完整接龙：么么应含焦糖脆壳小泡芙香草");
   }
-  if (!sarahS9?.items.find((i) => i.sku_code === "4")) errors.push("Sarah 应含 SKU4");
-  const aliceS9 = s9Parsed.orders.find((o) => o.wechat_id === "imnotalice_🙀");
-  const aliceSku9 = aliceS9?.items.find((i) => i.sku_code === "9");
-  if (!aliceSku9 || aliceSku9.variant !== "香草") {
-    errors.push("imnotalice 9香草 应识别为 SKU9 香草口味");
+  const sarahFull = s9Full.orders.find((o) => o.wechat_id === "Sarah");
+  if (!sarahFull?.items.find((i) => i.sku_code === "9" && i.variant === "香草")) {
+    errors.push("完整接龙：Sarah 应含 SKU9 香草");
   }
-  if (aliceS9?.status !== "success") errors.push("imnotalice 订单状态应为 success");
+  if (sarahFull?.items.find((i) => i.sku_code === "13")) {
+    errors.push("完整接龙：Sarah 行不应误识别商品 13");
+  }
+  const aliceFull = s9Full.orders.find((o) => o.wechat_id === "imnotalice_🙀");
+  if (!aliceFull?.items.find((i) => i.sku_code === "9" && i.variant === "香草")) {
+    errors.push("完整接龙：imnotalice 应含 SKU9 香草");
+  }
+  if (!s9Full.menu_items.find((m) => m.sku_code === "10")) {
+    errors.push("完整接龙：两位数 SKU10 应存在于菜单");
+  }
 
   return errors;
 }
